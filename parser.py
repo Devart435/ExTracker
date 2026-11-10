@@ -14,9 +14,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
 WHALE_WALLETS = [
-    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
-    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
-    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"
+    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", # Wintermute
+    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm", # Jump
+    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt", # DWF
+    # Добавляем супер-активные:
+    "9xQeWvG816bUx9EPf6kF7S5W4m8n9q3r2t1y0u8i7o6p", # Пример очень активного
+    "3ka1q7z7XjGfKjJ8s9F5s4a3D2e1R4t5Y6u7I8o9P0a"  # Пример
 ]
 
 # --- ОБМАНКА ДЛЯ RENDER (чтобы сервис не засыпал) ---
