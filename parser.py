@@ -15,16 +15,15 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
-# Реальные адреса китов
+# Реальные адреса китов (Wintermute, Jump Trading, DWF Labs)
 WHALE_WALLETS = [
-    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", # Wintermute
-    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm", # Jump Trading
-    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"  # DWF Labs
+    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
+    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
+    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"
 ]
 
-# --- ОБМАНКА ДЛЯ RENDER (чтобы сервис не спал) ---
+# --- ОБМАНКА ДЛЯ RENDER ---
 async def handle(request):
     return web.Response(text="ExTracker Parser is running...")
 
@@ -48,9 +47,9 @@ async def get_sol_price():
     except Exception:
         return 85.0
 
-# --- УВЕДОМЛЕНИЯ В ТЕЛЕГРАМ (ПОКА НЕ РАБОТАЕТ, НО КОД ЕСТЬ) ---
+# --- РАССЫЛКА УВЕДОМЛЕНИЙ ВСЕМ ЮЗЕРАМ ---
 async def send_telegram_notification(action, wallet, amount, time):
-    if not BOT_TOKEN or not ADMIN_CHAT_ID:
+    if not BOT_TOKEN or not SUPABASE_URL:
         return
         
     indicator = "🟢" if action == "BUY" else "🔴"
@@ -60,23 +59,39 @@ async def send_telegram_notification(action, wallet, amount, time):
         f"{indicator} <b>{header}</b>\n\n"
         f"Действие: {action}\n"
         f"Сумма: ${amount:,.2f}\n"
-        f"Кошелек: <code>{wallet[:6]}...{wallet[-6:]}</code>\n"
+        f"Кошелек: <code>{wallet}</code>\n"  # ПОЛНЫЙ АДРЕС
         f"Время: {time}\n"
         f"Сеть: Solana"
     )
     
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": ADMIN_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
+    # Получаем всех пользователей из базы
+    url = f"{SUPABASE_URL}/rest/v1/users?select=chat_id"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
     }
     
     try:
         async with aiohttp.ClientSession() as session:
-            await session.post(url, json=payload)
+            async with session.get(url, headers=headers) as resp:
+                users = await resp.json()
+            
+            if not users:
+                print("Нет пользователей в базе для рассылки.")
+                return
+                
+            for user in users:
+                chat_id = user['chat_id']
+                payload = {
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "HTML"
+                }
+                await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
+                
+        print(f"Уведомление разослано {len(users)} пользователям")
     except Exception as e:
-        print(f"Ошибка отправки уведомления: {e}")
+        print(f"Ошибка рассылки: {e}")
 
 # --- СОХРАНЕНИЕ В SUPABASE ---
 async def save_to_db(wallet, action, amount):
@@ -159,4 +174,4 @@ async def main():
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
