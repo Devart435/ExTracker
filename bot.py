@@ -40,14 +40,14 @@ async def show_main_menu(message: types.Message):
     ])
 
     caption = (
-        f"**Добро пожаловать в ExTracker, {message.from_user.first_name}.**\n\n"
+        f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\n"
         "Ваш доступ к терминалу мониторинга крупных ончейн-сделок и смарт-мани в сетях TON и Solana активирован.\n\n"
         "Нажмите кнопку ниже, чтобы открыть терминал и начать поиск транзакций китов."
     )
     try:
-        await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="Markdown")
+        await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="HTML")
     except Exception:
-        await message.answer(caption, reply_markup=kb, parse_mode="Markdown")
+        await message.answer(caption, reply_markup=kb, parse_mode="HTML")
 
 # --- СТАРТ ---
 @dp.message(CommandStart())
@@ -61,9 +61,9 @@ async def start(message: types.Message):
         ])
         text = "Для доступа к терминалу ExTracker, пожалуйста, подпишитесь на наш новостной канал."
         try:
-            await message.answer_photo(photo=IMG_SUBSCRIBE, caption=text, reply_markup=kb, parse_mode="Markdown")
+            await message.answer_photo(photo=IMG_SUBSCRIBE, caption=text, reply_markup=kb, parse_mode="HTML")
         except Exception:
-            await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+            await message.answer(text, reply_markup=kb, parse_mode="HTML")
         return
 
     await show_main_menu(message)
@@ -83,16 +83,16 @@ async def check_sub_callback(callback: types.CallbackQuery):
 async def profile(callback: types.CallbackQuery):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
     text = (
-        "**Профиль пользователя**\n\n"
-        f"ID: `{callback.from_user.id}`\n"
-        "Статус аккаунта: **FREE**\n"
-        "Лимит сессии: **3 часа**\n"
-        "Остаток времени: **02:59:59**"
+        "<b>Профиль пользователя</b>\n\n"
+        f"ID: <code>{callback.from_user.id}</code>\n"
+        "Статус аккаунта: <b>FREE</b>\n"
+        "Лимит сессии: <b>3 часа</b>\n"
+        "Остаток времени: <b>02:59:59</b>"
     )
     try:
-        await callback.message.answer_photo(photo=IMG_PROFILE, caption=text, reply_markup=back_kb, parse_mode="Markdown")
+        await callback.message.answer_photo(photo=IMG_PROFILE, caption=text, reply_markup=back_kb, parse_mode="HTML")
     except Exception:
-        await callback.message.answer(text, reply_markup=back_kb, parse_mode="Markdown")
+        await callback.message.answer(text, reply_markup=back_kb, parse_mode="HTML")
     await callback.answer()
 
 # --- ПОДДЕРЖКА ---
@@ -100,36 +100,39 @@ async def profile(callback: types.CallbackQuery):
 async def support(callback: types.CallbackQuery):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
     text = (
-        "**Служба поддержки ExTracker**\n\n"
+        "<b>Служба поддержки ExTracker</b>\n\n"
         "По вопросам работы терминала, оплаты или технических неполадок обращайтесь:\n"
         "@ExTrackerSupport"
     )
     try:
-        await callback.message.answer_photo(photo=IMG_SUPPORT, caption=text, reply_markup=back_kb, parse_mode="Markdown")
+        await callback.message.answer_photo(photo=IMG_SUPPORT, caption=text, reply_markup=back_kb, parse_mode="HTML")
     except Exception:
-        await callback.message.answer(text, reply_markup=back_kb, parse_mode="Markdown")
+        await callback.message.answer(text, reply_markup=back_kb, parse_mode="HTML")
     await callback.answer()
 
 # --- О НАС ---
 @dp.callback_query(F.data == "about")
 async def about(callback: types.CallbackQuery):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
+    
+    # HTML-разметка, чтобы _ в ссылке не ломала текст
     text = (
-        "**О проекте ExTracker**\n\n"
-        "**ExTracker** — это профессиональная инфраструктура для ончейн-аналитики. Мы предоставляем трейдерам и инвесторам доступ к данным о движениях «умных денег» (Smart Money) в режиме реального времени.\n\n"
-        "**Ключевые возможности:**\n"
+        "<b>О проекте ExTracker</b>\n\n"
+        "ExTracker — это профессиональная инфраструктура для ончейн-аналитики. Мы предоставляем трейдерам и инвесторам доступ к данным о движениях «умных денег» (Smart Money) в режиме реального времени.\n\n"
+        "<b>Ключевые возможности:</b>\n"
         "• Мониторинг более 100 активных кошельков китов.\n"
         "• Мгновенные алерты о крупных сделках (BUY/SELL).\n"
         "• Встроенный веб-терминал с фильтрацией объемов.\n\n"
-        "**Наши ресурсы:**\n"
+        "<b>Наши ресурсы:</b>\n"
         "• Новостной канал: @extracker_ru\n"
         "• Комьюнити: @extracker_community\n\n"
-        "*ExTracker Team*"
+        "<b>ExTracker Team</b>"
     )
+    
     try:
-        await callback.message.answer_photo(photo=IMG_ABOUT, caption=text, reply_markup=back_kb, parse_mode="Markdown")
+        await callback.message.answer_photo(photo=IMG_ABOUT, caption=text, reply_markup=back_kb, parse_mode="HTML")
     except Exception:
-        await callback.message.answer(text, reply_markup=back_kb, parse_mode="Markdown")
+        await callback.message.answer(text, reply_markup=back_kb, parse_mode="HTML")
     await callback.answer()
 
 # --- НАЗАД ---
