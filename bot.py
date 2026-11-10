@@ -1,5 +1,6 @@
 import asyncio
 import os
+import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
@@ -9,6 +10,8 @@ from aiogram.filters import CommandStart
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBAPP_URL = os.getenv("WEBAPP_URL")
 RENDER_URL = os.getenv("RENDER_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 
 # Твои картинки из Supabase
@@ -20,6 +23,22 @@ IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/b
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# --- ФУНКЦИЯ СОХРАНЕНИЯ В БАЗУ ---
+async def save_user_to_db(user_id: int, username: str):
+    url = f"{SUPABASE_URL}/rest/v1/users"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates" 
+    }
+    data = {"chat_id": user_id, "username": username}
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(url, headers=headers, json=data)
+    except Exception as e:
+        print(f"Ошибка сохранения юзера: {e}")
 
 async def check_sub(user_id: int) -> bool:
     try:
@@ -52,7 +71,13 @@ async def show_main_menu(message: types.Message):
 # --- СТАРТ ---
 @dp.message(CommandStart())
 async def start(message: types.Message):
-    is_sub = await check_sub(message.from_user.id)
+    user_id = message.from_user.id
+    username = message.from_user.username or "unknown"
+    
+    # Сохраняем пользователя в базу
+    await save_user_to_db(user_id, username)
+
+    is_sub = await check_sub(user_id)
     
     if not is_sub:
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -115,7 +140,6 @@ async def support(callback: types.CallbackQuery):
 async def about(callback: types.CallbackQuery):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
     
-    # HTML-разметка, чтобы _ в ссылке не ломала текст
     text = (
         "<b>О проекте ExTracker</b>\n\n"
         "ExTracker — это профессиональная инфраструктура для ончейн-аналитики. Мы предоставляем трейдерам и инвесторам доступ к данным о движениях «умных денег» (Smart Money) в режиме реального времени.\n\n"
