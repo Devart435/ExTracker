@@ -1,6 +1,0 @@
-aiogram==3.13.1
-aiohttp
-httpx
-websockets
-python-dotenv
-supabase
