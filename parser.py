@@ -4,7 +4,9 @@ import os
 import websockets
 import aiohttp
 from aiohttp import web
+from datetime import datetime
 
+# Ключи из переменных окружения Render
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
@@ -17,6 +19,7 @@ WHALE_WALLETS = [
     "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"
 ]
 
+# --- ОБМАНКА ДЛЯ RENDER (чтобы сервис не засыпал) ---
 async def handle(request):
     return web.Response(text="ExTracker Parser is running...")
 
@@ -30,6 +33,7 @@ async def start_web_server():
     await site.start()
     print(f"Веб-сервер запущен на порту {port}")
 
+# --- ПОЛУЧЕНИЕ КУРСА SOL ---
 async def get_sol_price():
     try:
         async with aiohttp.ClientSession() as session:
@@ -39,21 +43,21 @@ async def get_sol_price():
     except Exception:
         return 85.0
 
-# --- УВЕДОМЛЕНИЯ С КРУЖКАМИ ВМЕСТО СМАЙЛОВ ---
+# --- УВЕДОМЛЕНИЯ В TELEGRAM (ТОЛЬКО КРУЖКИ) ---
 async def send_telegram_notification(action, wallet, amount, time):
     if not BOT_TOKEN or not ADMIN_CHAT_ID:
         return
         
-    # Зеленый кружок для покупки, красный для продажи
     indicator = "🟢" if action == "BUY" else "🔴"
-    action_text = "КУПИЛ" if action == "BUY" else "ПРОДАЛ"
-    
+    header = "КИТ ЗАКУПИЛСЯ!" if action == "BUY" else "КИТ ПРОДАЛ!"
+        
     text = (
-        f"🚨 **НОВАЯ ТРАНЗАКЦИЯ КИТА** 🚨\n\n"
-        f"{indicator} Действие: {action_text}\n"
-        f"💰 Сумма: ${amount:,.2f}\n"
-        f"👛 Кошелек: `{wallet[:6]}...{wallet[-6:]}`\n"
-        f"⏰ Время: {time}\n"
+        f"{indicator} **{header}**\n\n"
+        f"Действие: {action}\n"
+        f"Сумма: ${amount:,.2f}\n"
+        f"Кошелек: `{wallet[:6]}...{wallet[-6:]}`\n"
+        f"Время: {time}\n"
+        f"Сеть: Solana"
     )
     
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -69,6 +73,7 @@ async def send_telegram_notification(action, wallet, amount, time):
     except Exception as e:
         print(f"Ошибка отправки уведомления: {e}")
 
+# --- СОХРАНЕНИЕ В SUPABASE ---
 async def save_to_db(wallet, action, amount):
     url = f"{SUPABASE_URL}/rest/v1/whale_transactions"
     headers = {
@@ -82,13 +87,14 @@ async def save_to_db(wallet, action, amount):
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data) as resp:
                 if resp.status == 201:
-                    print(f"✅ Сделка сохранена: {wallet[:8]}... на ${amount:.2f}")
+                    print(f"Сделка сохранена в БД: {wallet[:8]}... на ${amount:.2f}")
     except Exception as e:
-        print(f"Ошибка записи: {e}")
+        print(f"Ошибка записи в Supabase: {e}")
 
+# --- ОСНОВНАЯ ЛОГИКА ПАРСИНГА ---
 async def listen_to_whales():
     if not HELIUS_API_KEY or not SUPABASE_URL:
-        print("ОШИБКА: Не хватает ключей!")
+        print("ОШИБКА: Не хватает ключей в Environment!")
         return
 
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
@@ -103,12 +109,13 @@ async def listen_to_whales():
             ]
         }
         await websocket.send(json.dumps(subscribe_message))
-        print("Подписка отправлена. Ждем сделки...")
+        print("Подписка отправлена. Ждем реальные сделки...")
 
         while True:
             try:
                 message = await websocket.recv()
                 data = json.loads(message)
+                
                 if data.get("method") == "transactionNotification":
                     tx = data["params"]["result"]
                     transaction = tx["transaction"]
@@ -120,22 +127,27 @@ async def listen_to_whales():
                     for i in range(len(account_keys)):
                         if i < len(pre_balances) and i < len(post_balances):
                             diff = post_balances[i] - pre_balances[i]
+                            
+                            # Фильтр: изменение больше 1 SOL
                             if abs(diff) > 1_000_000_000: 
                                 amount_sol = abs(diff) / 1_000_000_000
                                 sol_price = await get_sol_price()
                                 amount_usd = amount_sol * sol_price
+                                
                                 wallet = account_keys[i]
                                 action = "BUY" if diff > 0 else "SELL"
                                 
-                                await save_to_db(wallet, action, amount_usd)
-                                
-                                time_now = tx.get("blockTime", "unknown")
-                                if isinstance(time_now, int):
-                                    from datetime import datetime
-                                    time_str = datetime.fromtimestamp(time_now).strftime("%H:%M:%S")
+                                # Время сделки
+                                block_time = tx.get("blockTime")
+                                if isinstance(block_time, int):
+                                    time_str = datetime.fromtimestamp(block_time).strftime("%H:%M:%S")
                                 else:
-                                    time_str = "12:44:02"
-                                    
+                                    time_str = datetime.now().strftime("%H:%M:%S")
+                                
+                                print(f"Найдена сделка: {action} на {amount_usd:.2f}$")
+                                
+                                # Отправляем данные
+                                await save_to_db(wallet, action, amount_usd)
                                 await send_telegram_notification(action, wallet, amount_usd, time_str)
 
             except websockets.exceptions.ConnectionClosed:
@@ -150,7 +162,7 @@ async def main():
         try:
             await listen_to_whales()
         except Exception as e:
-            print(f"Критическая ошибка: {e}. Перезапуск...")
+            print(f"Критическая ошибка: {e}. Перезапуск через 5 секунд...")
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
