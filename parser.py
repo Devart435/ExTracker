@@ -1,10 +1,14 @@
 import asyncio
 import json
 import os
+import sys
 import websockets
 import aiohttp
 from aiohttp import web
 from datetime import datetime
+
+# Заставляем Python выводить логи мгновенно (без задержек)
+sys.stdout.reconfigure(line_buffering=True)
 
 # Ключи из переменных окружения Render
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -13,16 +17,14 @@ HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
+# Реальные адреса китов
 WHALE_WALLETS = [
     "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", # Wintermute
-    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm", # Jump
-    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt", # DWF
-    # Добавляем супер-активные:
-    "9xQeWvG816bUx9EPf6kF7S5W4m8n9q3r2t1y0u8i7o6p", # Пример очень активного
-    "3ka1q7z7XjGfKjJ8s9F5s4a3D2e1R4t5Y6u7I8o9P0a"  # Пример
+    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm", # Jump Trading
+    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"  # DWF Labs
 ]
 
-# --- ОБМАНКА ДЛЯ RENDER (чтобы сервис не засыпал) ---
+# --- ОБМАНКА ДЛЯ RENDER (чтобы сервис не спал) ---
 async def handle(request):
     return web.Response(text="ExTracker Parser is running...")
 
@@ -46,7 +48,7 @@ async def get_sol_price():
     except Exception:
         return 85.0
 
-# --- УВЕДОМЛЕНИЯ В TELEGRAM (ТОЛЬКО КРУЖКИ) ---
+# --- УВЕДОМЛЕНИЯ В ТЕЛЕГРАМ (ПОКА НЕ РАБОТАЕТ, НО КОД ЕСТЬ) ---
 async def send_telegram_notification(action, wallet, amount, time):
     if not BOT_TOKEN or not ADMIN_CHAT_ID:
         return
@@ -55,10 +57,10 @@ async def send_telegram_notification(action, wallet, amount, time):
     header = "КИТ ЗАКУПИЛСЯ!" if action == "BUY" else "КИТ ПРОДАЛ!"
         
     text = (
-        f"{indicator} **{header}**\n\n"
+        f"{indicator} <b>{header}</b>\n\n"
         f"Действие: {action}\n"
         f"Сумма: ${amount:,.2f}\n"
-        f"Кошелек: `{wallet[:6]}...{wallet[-6:]}`\n"
+        f"Кошелек: <code>{wallet[:6]}...{wallet[-6:]}</code>\n"
         f"Время: {time}\n"
         f"Сеть: Solana"
     )
@@ -67,7 +69,7 @@ async def send_telegram_notification(action, wallet, amount, time):
     payload = {
         "chat_id": ADMIN_CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown"
+        "parse_mode": "HTML"
     }
     
     try:
@@ -90,14 +92,16 @@ async def save_to_db(wallet, action, amount):
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data) as resp:
                 if resp.status == 201:
-                    print(f"Сделка сохранена в БД: {wallet[:8]}... на ${amount:.2f}")
+                    print(f"✅ Сделка сохранена в БД: {wallet[:8]}... на ${amount:.2f}")
+                else:
+                    print(f"❌ Ошибка записи в БД: {resp.status}")
     except Exception as e:
-        print(f"Ошибка записи в Supabase: {e}")
+        print(f"Ошибка записи: {e}")
 
-# --- ОСНОВНАЯ ЛОГИКА ПАРСИНГА ---
+# --- ОСНОВНАЯ ЛОГИКА ---
 async def listen_to_whales():
     if not HELIUS_API_KEY or not SUPABASE_URL:
-        print("ОШИБКА: Не хватает ключей в Environment!")
+        print("ОШИБКА: Не хватает ключей!")
         return
 
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
@@ -112,13 +116,12 @@ async def listen_to_whales():
             ]
         }
         await websocket.send(json.dumps(subscribe_message))
-        print("Подписка отправлена. Ждем реальные сделки...")
+        print("Подписка отправлена. Ждем сделки...")
 
         while True:
             try:
                 message = await websocket.recv()
                 data = json.loads(message)
-                
                 if data.get("method") == "transactionNotification":
                     tx = data["params"]["result"]
                     transaction = tx["transaction"]
@@ -130,29 +133,16 @@ async def listen_to_whales():
                     for i in range(len(account_keys)):
                         if i < len(pre_balances) and i < len(post_balances):
                             diff = post_balances[i] - pre_balances[i]
-                            
-                            # Фильтр: изменение больше 1 SOL
                             if abs(diff) > 1_000_000_000: 
                                 amount_sol = abs(diff) / 1_000_000_000
                                 sol_price = await get_sol_price()
                                 amount_usd = amount_sol * sol_price
-                                
                                 wallet = account_keys[i]
                                 action = "BUY" if diff > 0 else "SELL"
                                 
-                                # Время сделки
-                                block_time = tx.get("blockTime")
-                                if isinstance(block_time, int):
-                                    time_str = datetime.fromtimestamp(block_time).strftime("%H:%M:%S")
-                                else:
-                                    time_str = datetime.now().strftime("%H:%M:%S")
-                                
                                 print(f"Найдена сделка: {action} на {amount_usd:.2f}$")
-                                
-                                # Отправляем данные
                                 await save_to_db(wallet, action, amount_usd)
-                                await send_telegram_notification(action, wallet, amount_usd, time_str)
-
+                                await send_telegram_notification(action, wallet, amount_usd, datetime.now().strftime("%H:%M:%S"))
             except websockets.exceptions.ConnectionClosed:
                 print("Соединение закрыто. Переподключение...")
                 break
@@ -165,7 +155,7 @@ async def main():
         try:
             await listen_to_whales()
         except Exception as e:
-            print(f"Критическая ошибка: {e}. Перезапуск через 5 секунд...")
+            print(f"Критическая ошибка: {e}. Перезапуск...")
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
