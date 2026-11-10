@@ -7,23 +7,19 @@ import aiohttp
 from aiohttp import web
 from datetime import datetime
 
-# Заставляем Python выводить логи мгновенно (без задержек)
 sys.stdout.reconfigure(line_buffering=True)
 
-# Ключи из переменных окружения Render
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Реальные адреса китов (Wintermute, Jump Trading, DWF Labs)
 WHALE_WALLETS = [
     "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
     "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
     "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"
 ]
 
-# --- ОБМАНКА ДЛЯ RENDER ---
 async def handle(request):
     return web.Response(text="ExTracker Parser is running...")
 
@@ -37,7 +33,6 @@ async def start_web_server():
     await site.start()
     print(f"Веб-сервер запущен на порту {port}")
 
-# --- ПОЛУЧЕНИЕ КУРСА SOL ---
 async def get_sol_price():
     try:
         async with aiohttp.ClientSession() as session:
@@ -47,7 +42,6 @@ async def get_sol_price():
     except Exception:
         return 85.0
 
-# --- РАССЫЛКА УВЕДОМЛЕНИЙ ВСЕМ ЮЗЕРАМ ---
 async def send_telegram_notification(action, wallet, amount, time):
     if not BOT_TOKEN or not SUPABASE_URL:
         return
@@ -59,13 +53,13 @@ async def send_telegram_notification(action, wallet, amount, time):
         f"{indicator} <b>{header}</b>\n\n"
         f"Действие: {action}\n"
         f"Сумма: ${amount:,.2f}\n"
-        f"Кошелек: <code>{wallet}</code>\n"  # ПОЛНЫЙ АДРЕС
+        f"Кошелек: <code>{wallet}</code>\n"
         f"Время: {time}\n"
         f"Сеть: Solana"
     )
     
-    # Получаем всех пользователей из базы
-    url = f"{SUPABASE_URL}/rest/v1/users?select=chat_id"
+    # Ищем только АКТИВНЫХ пользователей, чей фильтр подходит под сумму
+    url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}"
@@ -77,7 +71,7 @@ async def send_telegram_notification(action, wallet, amount, time):
                 users = await resp.json()
             
             if not users:
-                print("Нет пользователей в базе для рассылки.")
+                print(f"Сделка на ${amount:.2f} не попала в фильтры активных пользователей.")
                 return
                 
             for user in users:
@@ -89,11 +83,10 @@ async def send_telegram_notification(action, wallet, amount, time):
                 }
                 await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
                 
-        print(f"Уведомление разослано {len(users)} пользователям")
+        print(f"Уведомление разослано {len(users)} пользователям (сделка ${amount:.2f})")
     except Exception as e:
         print(f"Ошибка рассылки: {e}")
 
-# --- СОХРАНЕНИЕ В SUPABASE ---
 async def save_to_db(wallet, action, amount):
     url = f"{SUPABASE_URL}/rest/v1/whale_transactions"
     headers = {
@@ -113,7 +106,6 @@ async def save_to_db(wallet, action, amount):
     except Exception as e:
         print(f"Ошибка записи: {e}")
 
-# --- ОСНОВНАЯ ЛОГИКА ---
 async def listen_to_whales():
     if not HELIUS_API_KEY or not SUPABASE_URL:
         print("ОШИБКА: Не хватает ключей!")
