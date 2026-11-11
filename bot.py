@@ -54,7 +54,9 @@ async def show_main_menu(message: types.Message):
         [InlineKeyboardButton(text="Профиль", callback_data="profile"), InlineKeyboardButton(text="Поддержка", callback_data="support")],
         [InlineKeyboardButton(text="О нас", callback_data="about")]
     ])
-    caption = f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\nВаш доступ к терминалу мониторинга крупных ончейн-сделок и смарт-мани в сетях TON и Solana активирован.\n\nНажмите кнопку ниже, чтобы открыть терминал и начать поиск транзакций китов."
+    # Защита от None при вызове из CallbackQuery
+    user_name = message.from_user.first_name if message.from_user else "трейдер"
+    caption = f"<b>Добро пожаловать в ExTracker, {user_name}.</b>\n\nВаш доступ к терминалу мониторинга крупных ончейн-сделок и смарт-мани в сетях TON и Solana активирован.\n\nНажмите кнопку ниже, чтобы открыть терминал и начать поиск транзакций китов."
     try:
         await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="HTML")
     except Exception:
@@ -89,6 +91,7 @@ async def start(message: types.Message):
 async def check_sub_callback(callback: types.CallbackQuery):
     if await check_sub(callback.from_user.id):
         await callback.message.delete()
+        # Передаем callback.message, но внутри show_main_menu мы уже добавили защиту
         await show_main_menu(callback.message)
     else:
         await callback.answer("Вы все еще не подписаны на канал!", show_alert=True)
@@ -130,7 +133,7 @@ async def back_to_start(callback: types.CallbackQuery):
     await show_main_menu(callback.message)
     await callback.answer()
 
-# --- ОПЛАТА (CRYPTO + STARS) ---
+# --- ОПЛАТА ---
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
@@ -159,14 +162,16 @@ async def on_successful_payment(message: types.Message):
         await update_user_plan(message.from_user.id, "plus")
         await message.answer("✅ Оплата Stars прошла! Ваш статус обновлен на <b>PLUS</b>.", parse_mode="HTML")
 
-# --- ЗАПУСК ---
+# --- ЗАПУСК (ИСПРАВЛЕНО) ---
 async def on_startup(bot: Bot):
-    await bot.set_webhook(f"{RENDER_URL}/webhook")
+    print(f"Устанавливаю Webhook на {RENDER_URL}/webhook")
+    await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
 
 def main():
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
-    setup_application(app, dp, bot=bot)
+    # ВАЖНО: передаем on_startup в setup_application
+    setup_application(app, dp, bot=bot, on_startup=on_startup)
     port = int(os.environ.get("PORT", 8080))
     web.run_app(app, host="0.0.0.0", port=port)
 
