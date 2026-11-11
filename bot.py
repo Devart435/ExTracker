@@ -15,7 +15,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 
-# Картинки
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
 IMG_SUPPORT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000aa2c821087ec3f3ea12422f6.png"
 IMG_PROFILE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000033e082109342702b717a9f88.png"
@@ -53,7 +52,7 @@ async def show_main_menu(message: types.Message):
         [InlineKeyboardButton(text="О нас", callback_data="about")]
     ])
     user_name = message.from_user.first_name if message.from_user else "трейдер"
-    caption = f"<b>Добро пожаловать в ExTracker, {user_name}.</b>\n\nВаш доступ к терминалу мониторинга крупных ончейн-сделок и смарт-мани в сетях TON и Solana активирован.\n\nНажмите кнопку ниже, чтобы открыть терминал и начать поиск транзакций китов."
+    caption = f"<b>Добро пожаловать в ExTracker, {user_name}.</b>\n\nВаш доступ к терминалу мониторинга крупных ончейн-сделок активирован.\n\nНажмите кнопку ниже, чтобы открыть терминал."
     try:
         await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="HTML")
     except Exception:
@@ -113,7 +112,7 @@ async def support(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "about")
 async def about(callback: types.CallbackQuery):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
-    text = "<b>О проекте ExTracker</b>\n\nExTracker — профессиональная инфраструктура для ончейн-аналитики. Мониторим 100+ кошельков.\n\n<b>Наши ресурсы:</b>\n@extracker_ru\n@extracker_community\n\n<b>ExTracker Team</b>"
+    text = "<b>О проекте ExTracker</b>\n\nExTracker — профессиональная инфраструктура для ончейн-аналитики. Мониторим 100+ кошельков.\n\n<b>Наши ресурсы:</b>\n@extracker_ru\n@extracker_community"
     try:
         await callback.message.answer_photo(photo=IMG_ABOUT, caption=text, reply_markup=back_kb, parse_mode="HTML")
     except Exception:
@@ -144,18 +143,7 @@ async def send_crypto_invoice(message: types.Message, amount_usd: float, title: 
         print(f"CryptoBot Error: {e}")
         await message.answer("Ошибка сервера.")
 
-@dp.message(F.successful_payment)
-async def on_successful_payment(message: types.Message):
-    payload = message.successful_payment.invoice_payload
-    if payload == "pro_30d":
-        await update_user_plan(message.from_user.id, "pro")
-        await message.answer("✅ Оплата Stars прошла! Ваш статус обновлен на <b>PRO</b>.", parse_mode="HTML")
-    elif payload == "plus_30d":
-        await update_user_plan(message.from_user.id, "plus")
-        await message.answer("✅ Оплата Stars прошла! Ваш статус обновлен на <b>PLUS</b>.", parse_mode="HTML")
-
 def main():
-    # Устанавливаем вебхук ПЕРЕД запуском сервера
     asyncio.run(bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True))
     
     app = web.Application()
