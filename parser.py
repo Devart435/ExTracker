@@ -11,7 +11,6 @@ from collections import defaultdict
 
 sys.stdout.reconfigure(line_buffering=True)
 
-# --- НАСТРОЙКИ ---
 _raw_supabase = os.getenv("SUPABASE_URL", "")
 SUPABASE_URL = _raw_supabase.replace("/rest/v1/", "").replace("/rest/v1", "").rstrip("/")
 
@@ -21,7 +20,6 @@ TON_API_KEY = os.getenv("TON_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://extracker-eight.vercel.app")
 
-# ID токенов
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 
@@ -29,7 +27,6 @@ MIN_SWAP_USD_SOL = 15000
 MIN_SWAP_USD_TON = 5000
 
 price_cache = {"TON": 0.0, "SOL": 0.0, "last_update": 0}
-dex_cache = {} # Кэш DexScreener
 blacklist = set()
 swap_history = defaultdict(list)
 
@@ -52,7 +49,6 @@ async def background_price_updater():
         await update_prices()
         await asyncio.sleep(60)
 
-# --- DEXSCREENER ---
 async def get_token_stats(contract_address, network):
     if not contract_address: return {}
     try:
@@ -64,13 +60,7 @@ async def get_token_stats(contract_address, network):
                     pairs = data.get("pairs", [])
                     if pairs:
                         best = max(pairs, key=lambda x: float(x.get("liquidity", {}).get("usd", 0) or 0))
-                        return {
-                            "price": best.get("priceUsd", "0"),
-                            "mcap": best.get("fdv", "0"),
-                            "liquidity": best.get("liquidity", {}).get("usd", "0"),
-                            "symbol": best.get("baseToken", {}).get("symbol", "TOKEN"),
-                            "name": best.get("baseToken", {}).get("name", "")
-                        }
+                        return {"price": best.get("priceUsd", "0"), "mcap": best.get("fdv", "0"), "liquidity": best.get("liquidity", {}).get("usd", "0"), "symbol": best.get("baseToken", {}).get("symbol", "TOKEN"), "name": best.get("baseToken", {}).get("name", "")}
     except: pass
     return {}
 
@@ -94,7 +84,6 @@ def is_mev_bot(wallet, network, swap_time):
         return True
     return False
 
-# --- SUPABASE ---
 async def save_swap_to_db(wallet, action, amount_usd, token_symbol, network, tx_hash, contract_address=""):
     if amount_usd <= 0: return
     url = f"{SUPABASE_URL}/rest/v1/whale_transactions"
@@ -105,7 +94,6 @@ async def save_swap_to_db(wallet, action, amount_usd, token_symbol, network, tx_
             await session.post(url, headers=headers, json=data)
     except: pass
 
-# --- TELEGRAM ALERT ---
 async def send_telegram_alert(wallet, action, amount_usd, token_symbol, network, tx_hash, contract_address=""):
     if not BOT_TOKEN: return
     stats = await get_token_stats(contract_address, network)
@@ -113,20 +101,17 @@ async def send_telegram_alert(wallet, action, amount_usd, token_symbol, network,
     
     indicator = "🟢" if action == "BUY" else "🔴"
     entry_type = "Fresh Entry" if action == "BUY" else "Сброс позиции"
+    
+    # ИСПРАВЛЕНИЕ: ссылка на эксплорер через хэш транзакции
     explorer = f"https://solscan.io/tx/{tx_hash}" if network == "Solana" else f"https://tonviewer.com/transaction/{tx_hash}"
     chart = f"https://dexscreener.com/{network.lower()}/{contract_address}"
     
-    text = (
-        f"{indicator} <b>{action} • {network.upper()}</b> | <i>{entry_type}</i>\n\n"
-        f"Токен: <b>{safe_token}</b>\n"
-        f"Сумма: <b>${amount_usd:,.2f}</b>\n"
-    )
+    text = f"{indicator} <b>{action} • {network.upper()}</b> | <i>{entry_type}</i>\n\nТокен: <b>{safe_token}</b>\nСумма: <b>${amount_usd:,.2f}</b>\n"
     if stats:
-        text += f"Цена: <b>${stats.get('price', '0')}</b> • MCap: <b>${float(stats.get('mcap', 0)):,.0f}</b>\n"
-        text += f"Ликвидность: <b>${float(stats.get('liquidity', 0)):,.0f}</b>\n"
-    
+        text += f"Цена: <b>${stats.get('price', '0')}</b> • MCap: <b>${float(stats.get('mcap', 0)):,.0f}</b>\nЛиквидность: <b>${float(stats.get('liquidity', 0)):,.0f}</b>\n"
     text += f"\nCA: <code>{contract_address or wallet}</code>\n\n<a href=\"{explorer}\">Транзакция</a> • <a href=\"{chart}\">График</a>"
 
+    # ИСПРАВЛЕНИЕ: правильные ссылки для покупки
     if network == "Solana":
         buy_buttons = [{"text": "Купить: Trojan", "url": f"https://t.me/solana_trojanbot?start={contract_address}"}, {"text": "Купить: BullX", "url": f"https://t.me/BullXBot?start={contract_address}"}]
     else:
@@ -134,8 +119,7 @@ async def send_telegram_alert(wallet, action, amount_usd, token_symbol, network,
     
     kb = {"inline_keyboard": [buy_buttons, [{"text": "Открыть в ExTracker", "web_app": {"url": WEBAPP_URL}}, {"text": "Скрыть кита", "callback_data": f"mute_whale:{wallet}"}]]}
     
-    # Лимиты для FREE
-    url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount_usd}&max_amount=gte.{amount_usd}&select=chat_id,plan"
+    url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount_usd}&max_amount=gte.{amount_usd}&select=chat_id"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     try:
         async with aiohttp.ClientSession() as session:
@@ -143,21 +127,10 @@ async def send_telegram_alert(wallet, action, amount_usd, token_symbol, network,
                 users = await resp.json()
                 for u in users:
                     if not u.get('chat_id'): continue
-                    plan = u.get('plan', 'free')
-                    
-                    # Проверка лимита для FREE (максимум 10 сообщений в день)
-                    if plan == 'free':
-                        # В реальности нужно проверять таблицу логов, здесь для примера:
-                        pass # Пока шлем всем, кто активен
-
-                    await session.post(
-                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                        json={"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML", "disable_web_page_preview": True, "reply_markup": kb}
-                    )
+                    await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML", "disable_web_page_preview": True, "reply_markup": kb})
                     await asyncio.sleep(1)
     except Exception as e: print(f"TG Error: {e}")
 
-# --- SOLANA ---
 async def process_solana_batch(session, signatures):
     if not signatures: return
     url = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
@@ -207,6 +180,7 @@ async def process_solana_batch(session, signatures):
                 elif token_in not in stable_tokens and token_out in stable_tokens: action = "SELL"; token_symbol = token_in
                 else: action = "BUY"
                 
+                # ИСПРАВЛЕНИЕ: передаем tx_hash в save и alert
                 await save_swap_to_db(fee_payer, action, total_usd, token_symbol, "Solana", tx.get("signature", ""), contract_address)
                 await send_telegram_alert(fee_payer, action, total_usd, token_symbol, "Solana", tx.get("signature", ""), contract_address)
     except Exception as e: print(f"Solana Batch Error: {e}")
@@ -231,7 +205,6 @@ async def listen_to_solana():
                             await process_solana_batch(session, signature_queue[:20]); signature_queue = signature_queue[20:]; last_batch_time = time.time()
             except Exception as e: print(f"Solana WS: {e}"); await asyncio.sleep(3)
 
-# --- TON ---
 async def listen_to_ton():
     print("TON слушаем...")
     url = "https://tonapi.io/v2/sse/transactions?accounts=ALL&operations=StonfiSwap,JettonSwap"
@@ -265,6 +238,7 @@ async def listen_to_ton():
                             token_symbol = stats.get("symbol", "TON")
                             action_type = "BUY" if swap.get("ton_in") else "SELL"
                             
+                            # ИСПРАВЛЕНИЕ: передаем event_id как tx_hash (для TON это работает в Tonviewer)
                             await save_swap_to_db(user_wallet, action_type, total_usd, token_symbol, "TON", event.get("event_id", ""), contract_address)
                             await send_telegram_alert(user_wallet, action_type, total_usd, token_symbol, "TON", event.get("event_id", ""), contract_address)
             except Exception as e: pass
