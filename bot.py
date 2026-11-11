@@ -3,7 +3,7 @@ import os
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.filters import CommandStart, CommandObject
 
@@ -15,7 +15,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 
-# Твои картинки
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
 IMG_SUPPORT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000aa2c821087ec3f3ea12422f6.png"
 IMG_PROFILE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000033e082109342702b717a9f88.png"
@@ -25,7 +24,6 @@ IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/b
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- БАЗА ДАННЫХ ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
@@ -47,14 +45,12 @@ async def check_sub(user_id: int) -> bool:
     except Exception:
         return False
 
-# --- ГЛАВНОЕ МЕНЮ ---
 async def show_main_menu(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Открыть ExTracker", web_app=WebAppInfo(url=WEBAPP_URL))],
         [InlineKeyboardButton(text="Профиль", callback_data="profile"), InlineKeyboardButton(text="Поддержка", callback_data="support")],
         [InlineKeyboardButton(text="О нас", callback_data="about")]
     ])
-    # Защита от None при вызове из CallbackQuery
     user_name = message.from_user.first_name if message.from_user else "трейдер"
     caption = f"<b>Добро пожаловать в ExTracker, {user_name}.</b>\n\nВаш доступ к терминалу мониторинга крупных ончейн-сделок и смарт-мани в сетях TON и Solana активирован.\n\nНажмите кнопку ниже, чтобы открыть терминал и начать поиск транзакций китов."
     try:
@@ -62,12 +58,10 @@ async def show_main_menu(message: types.Message):
     except Exception:
         await message.answer(caption, reply_markup=kb, parse_mode="HTML")
 
-# --- СТАРТ С ПАРАМЕТРОМ (DEEP LINK) ---
 @dp.message(CommandStart(deep_link=True))
 async def start_with_payload(message: types.Message, command: CommandObject):
     payload = command.args
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
-    
     if payload == "pay_pro":
         await send_crypto_invoice(message, 5.0, "ExTracker PRO", "pro_30d")
     elif payload == "pay_plus":
@@ -91,12 +85,10 @@ async def start(message: types.Message):
 async def check_sub_callback(callback: types.CallbackQuery):
     if await check_sub(callback.from_user.id):
         await callback.message.delete()
-        # Передаем callback.message, но внутри show_main_menu мы уже добавили защиту
         await show_main_menu(callback.message)
     else:
         await callback.answer("Вы все еще не подписаны на канал!", show_alert=True)
 
-# --- ПРОФИЛЬ / ПОДДЕРЖКА / О НАС ---
 @dp.callback_query(F.data == "profile")
 async def profile(callback: types.CallbackQuery):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
@@ -133,7 +125,6 @@ async def back_to_start(callback: types.CallbackQuery):
     await show_main_menu(callback.message)
     await callback.answer()
 
-# --- ОПЛАТА ---
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
@@ -162,7 +153,6 @@ async def on_successful_payment(message: types.Message):
         await update_user_plan(message.from_user.id, "plus")
         await message.answer("✅ Оплата Stars прошла! Ваш статус обновлен на <b>PLUS</b>.", parse_mode="HTML")
 
-# --- ЗАПУСК (ИСПРАВЛЕНО) ---
 async def on_startup(bot: Bot):
     print(f"Устанавливаю Webhook на {RENDER_URL}/webhook")
     await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
@@ -170,7 +160,6 @@ async def on_startup(bot: Bot):
 def main():
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
-    # ВАЖНО: передаем on_startup в setup_application
     setup_application(app, dp, bot=bot, on_startup=on_startup)
     port = int(os.environ.get("PORT", 8080))
     web.run_app(app, host="0.0.0.0", port=port)
