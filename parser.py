@@ -8,6 +8,9 @@ import aiohttp
 from aiohttp import web
 from datetime import datetime
 
+# Подключаем библиотеку для работы с TON
+from pytoniq_core import Address, Cell, begin_cell, Slice
+
 sys.stdout.reconfigure(line_buffering=True)
 
 _raw_supabase = os.getenv("SUPABASE_URL", "")
@@ -18,8 +21,9 @@ HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 TON_API_KEY = os.getenv("TON_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# --- КЭШ ЦЕН ---
+# --- КЭШ ЦЕН И ТОКЕНОВ ---
 price_cache = {"TON": 0.0, "SOL": 0.0, "last_update": 0}
+jetton_cache = {} 
 
 async def update_prices():
     global price_cache
@@ -37,20 +41,49 @@ async def update_prices():
     except Exception as e:
         print(f"Ошибка получения цен: {e}")
 
-# --- ПОЛУЧЕНИЕ ИНФО О ТОКЕНЕ TON (JETTON) ---
 async def get_jetton_info(jetton_master):
+    if jetton_master in jetton_cache:
+        return jetton_cache[jetton_master]
     try:
         async with aiohttp.ClientSession() as session:
             url = f"https://tonapi.io/v2/jettons/{jetton_master}"
             async with session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    symbol = data.get("metadata", {}).get("symbol", "UNKNOWN")
+                    symbol = data.get("metadata", {}).get("symbol", "TOKEN")
+                    decimals = data.get("metadata", {}).get("decimals", 9)
                     price = data.get("dex_usd_price", 0.0)
                     if price and price > 0:
-                        return symbol, price
+                        jetton_cache[jetton_master] = (symbol, decimals, price)
+                        return symbol, decimals, price
     except: pass
-    return "TOKEN", 0.0
+    return None, 9, 0.0
+
+# --- ПАРСИНГ JETTON ИЗ BOC ---
+def parse_jetton_transfer(body_boc_base64):
+    try:
+        # Декодируем base64 в Cell
+        cell = Cell.from_boc_base64(body_boc_base64)
+        slice_data = cell.begin_parse()
+        
+        # Проверяем op-code (0x0f8a7ea5 для transfer, 0x178d4519 для internal_transfer)
+        op_code = slice_data.load_uint(32)
+        
+        if op_code == 0x0f8a7ea5: # Jetton Transfer
+            query_id = slice_data.load_uint(64)
+            amount = slice_data.load_coins()
+            destination = slice_data.load_address()
+            response_destination = slice_data.load_address()
+            custom_payload = slice_data.load_ref()
+            forward_ton_amount = slice_data.load_coins()
+            forward_payload = slice_data.load_ref()
+            
+            # В forward_payload обычно лежит jetton_master
+            # Но проще запросить инфу по адресу destination (который и есть jetton_master)
+            return str(destination), amount
+    except Exception as e:
+        pass
+    return None, 0
 
 async def handle(request): return web.Response(text="ExTracker Parser is running...")
 
@@ -90,7 +123,7 @@ async def send_telegram_notification(action, wallet, amount, time, token_symbol,
                         send_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
                         payload = {"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML"}
                         await session.post(send_url, json=payload)
-    except Exception as e: print(f"Ошибка рассылки: {e}")
+    except Exception as e: pass
 
 # --- SOLANA ---
 async def listen_to_solana():
@@ -108,19 +141,16 @@ async def listen_to_solana():
                     meta = tx.get("meta", {})
                     keys = tx["transaction"]["message"]["accountKeys"]
                     
-                    # Ищем SPL токены
                     token_name = "SOL"
-                    pre_token = meta.get("preTokenBalances", [])
                     post_token = meta.get("postTokenBalances", [])
                     if post_token and len(post_token) > 0:
-                        # Если есть токены, берем первый (упрощенно)
                         token_name = "SPL_TOKEN" 
 
                     for i in range(len(keys)):
                         pre, post = meta.get("preBalances", []), meta.get("postBalances", [])
                         if i < len(pre) and i < len(post):
                             diff = post[i] - pre[i]
-                            if abs(diff) > 10_000_000_000: # > 10 SOL
+                            if abs(diff) > 10_000_000_000: 
                                 amount = (abs(diff) / 1_000_000_000) * price_cache["SOL"]
                                 action = "BUY" if diff > 0 else "SELL"
                                 wallet_addr = keys[i] if isinstance(keys[i], str) else keys[i].get("pubkey", "")
@@ -167,16 +197,21 @@ async def listen_to_ton():
                                             await save_to_db(wallet, "BUY", amount, "TON", "TON")
                                             await send_telegram_notification("BUY", wallet, amount, datetime.now().strftime("%H:%M:%S"), "TON", "TON")
                                     
-                                    # 2. Jettons
+                                    # 2. JETTON
                                     if isinstance(in_msg, dict) and "msg_data" in in_msg:
                                         msg_data = in_msg.get("msg_data", {})
                                         body = msg_data.get("body", "")
-                                        if body and "te6cc" in body:
-                                            # Упрощенный поиск Jetton Master в теле (может требовать доработки)
-                                            # Мы просто отправим запрос в tonapi, чтобы узнать, что это за токен (в тестовом режиме)
-                                            # Для продакшена тут нужен pytoniq-core для точного парсинга BOC
-                                            pass 
-            except Exception:
+                                        if body:
+                                            jetton_master, jetton_amount = parse_jetton_transfer(body)
+                                            if jetton_master:
+                                                symbol, decimals, price = await get_jetton_info(jetton_master)
+                                                if symbol and price > 0:
+                                                    usd_amount = (jetton_amount / (10 ** decimals)) * price
+                                                    if usd_amount > 1000:
+                                                        processed_txs.add(tx_hash)
+                                                        await save_to_db(wallet, "BUY", usd_amount, symbol, "TON")
+                                                        await send_telegram_notification("BUY", wallet, usd_amount, datetime.now().strftime("%H:%M:%S"), symbol, "TON")
+            except Exception as e:
                 pass
         await asyncio.sleep(10)
 
