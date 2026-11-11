@@ -15,11 +15,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 
+# ИМЯ БОТА
+BOT_USERNAME = "ExTrackerTerminalBot"
+
+IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png"
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
 IMG_SUPPORT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000aa2c821087ec3f3ea12422f6.png"
 IMG_PROFILE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000033e082109342702b717a9f88.png"
 IMG_ABOUT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000a090821293d0cb7b8d988b9e.png"
-IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -45,6 +48,31 @@ async def check_sub(user_id: int) -> bool:
     except Exception:
         return False
 
+# --- ВЕБХУК ДЛЯ CRYPTOBOT (АВТООПЛАТА) ---
+async def crypto_webhook(request):
+    try:
+        data = await request.json()
+        if data.get("update_type") == "invoice_paid":
+            invoice = data.get("payload", {})
+            payload = invoice.get("payload", "")
+            
+            # Вытаскиваем ID юзера из payload (мы передавали его как pro_30d_12345678)
+            if "_" in payload:
+                user_id_str = payload.split("_")[-1]
+                if user_id_str.isdigit():
+                    user_id = int(user_id_str)
+                    if "pro" in payload:
+                        await update_user_plan(user_id, "pro")
+                        await bot.send_message(user_id, "✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>PRO</b>. Спасибо за поддержку!", parse_mode="HTML")
+                    elif "plus" in payload:
+                        await update_user_plan(user_id, "plus")
+                        await bot.send_message(user_id, "✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>PLUS</b>. Спасибо за поддержку!", parse_mode="HTML")
+        return web.Response(status=200)
+    except Exception as e:
+        print(f"Webhook Error: {e}")
+        return web.Response(status=500)
+
+# --- МЕНЮ ---
 async def show_main_menu(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Открыть ExTracker", web_app=WebAppInfo(url=WEBAPP_URL))],
@@ -128,7 +156,17 @@ async def back_to_start(callback: types.CallbackQuery):
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
-    data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": payload, "expires_in": 3600}
+    # Передаем ID пользователя в payload
+    payload_with_id = f"{payload}_{message.from_user.id}"
+    data = {
+        "asset": "USDT", 
+        "amount": str(amount_usd), 
+        "description": title, 
+        "payload": payload_with_id, 
+        "expires_in": 3600,
+        "allow_comments": False,
+        "allow_anonymous": False
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
@@ -148,6 +186,7 @@ def main():
     
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
+    app.router.add_post("/crypto_webhook", crypto_webhook)
     setup_application(app, dp, bot=bot)
     
     port = int(os.environ.get("PORT", 8080))
