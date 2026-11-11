@@ -12,43 +12,42 @@ sys.stdout.reconfigure(line_buffering=True)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+TON_API_KEY = os.getenv("TON_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 WHALE_WALLETS = [
-    # === 1. МАРКЕТ-МЕЙКЕРЫ (Подтвержденные) ===
-    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", # Wintermute (Primary MM) [citation:3]
-    "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa", # Wintermute (Market Making) [citation:3]
-    "BMnT51N4iSNhWU5PyFFgWwFvN1jgaiiDr9ZHgnkm3iLJ", # Wintermute (OTC/Trading) [citation:3]
-    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm", # Jump Trading [citation:3]
-    "6v3snejEvRsTzeUZV2yKAcRgbxRz3iMJJgpeqJ1CxM6P", # Jump Capital [citation:3]
-    "5pU7WKL47At6rHLM4CmFCSPRdT32J1LHSgPFhWGuXZqc", # Jump Capital [citation:3]
-    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt", # DWF Labs (Official) [citation:3]
-    "B5dWf97VwfKumCT377Nh8rC51qoi7o5tYou3ZNzrR3P3", # DWF Labs (Suspected) [citation:3]
-    
-    # === 2. ПРОГРАММЫ (Генерируют тонны транзакций) ===
-    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", # Raydium AMM v4 [citation:4][citation:8]
-    "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK", # Raydium CLMM [citation:4][citation:8]
-    
-    # === 3. КРУПНЕЙШИЕ ТРЕЙДЕРЫ (Из Dune Analytics) ===
-    "jTcKH6sMbMMrvroaqeuM1CFmESz5zB29H5gSxNAQyNu", # Топ-трейдер (объем $74M+ за 7 дней) [citation:11][citation:14]
-    "4HnnBQaVw6eP52wPzaePFWR4AcFjG5cTs2EckLtJ6d6C", # Топ-трейдер (объем $32M+) [citation:11][citation:14]
-    "3cmf1r4gMfEkj87PjLSsjkhLsp1o6VXLRWSgaeeDrdan", # Топ-трейдер (объем $15M+) [citation:11][citation:14]
-    "Em6d5nrTF7k3M3RKXLxGLs6r7Ed8wFa2GxRdaCyeVnTn", # Топ-трейдер (объем $14M+) [citation:11][citation:14]
-    "9eLmSbNthkdJuXgo54XZqtXzexZD28HojTrf2N2g7g4", # Топ-трейдер (объем $12M+) [citation:11][citation:14]
-    "bobf28kwimRKWTH3Qv7HvygHvqhgRuRax21z5fyTjdE", # Топ-трейдер (объем $11M+) [citation:11][citation:14]
-    "CLoPSvbauaaSWs1teGgLnrHHf7FuJC3xtUsZP3KwuJsw", # Топ-трейдер (объем $9.8M+) [citation:11][citation:14]
-    
-    # === 4. КРУПНЫЕ СТЕЙКЕРЫ / ХОЛДЕРЫ ===
-    "MJKqp326RZCHnAAbew9MDdui3iCKWco7fsK9sVuZTX2", # Топ-1 стейкер (5.1M SOL) [citation:1]
-    "52C9T2T7JRojtxumYnYZhyUmrN7kqzvCLc4Ksvjk7TxD", # Топ-2 стейкер (4.3M SOL) [citation:1]
-    "8BseXT9EtoEhBTKFFYkwTnjKSUZwhtmdKY2Jrj8j45Rt", # Топ-3 стейкер (3.9M SOL) [citation:1]
-    "GitYucwpNcg6Dx1Y15UQ9TQn8LZMX1uuqQNn8rXxEWNC", # Kraken Staking [citation:1]
-    "9QgXqrgdbVU8KcpfskqJpAXKzbaYQJecgMAruSWoXDkM", # Топ-5 стейкер (3.1M SOL) [citation:1]
-    
-    # === 5. АКТИВНЫЕ ТРЕЙДЕРЫ (Из Dune) ===
-    "41zCUJsKk6cMB94DDtm99qWmyMZfp4GkAhhuz4xTwePu", # Огромный поток ($5.9B+) [citation:6]
-    "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9", # Крупный поток ($2.8B+) [citation:6]
-    "3ADzk5YDP9sgorvPSs9YPxigJiSqhgddpwHwwPwmEFib"  # Крупный поток ($2B+) [citation:6]
+    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
+    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
+    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"
+]
+
+# 25 адресов TON (пока тестовые, потом заменим)
+TON_WHALE_WALLETS = [
+    "EQA-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
+    "EQAI7sfVjEv0ywHV2SbP-9bhdDJ8-Z0k1BpxM0WleeP2PxTW",
+    "EQAL1QRD508kA3pYrYaLID7Xr5wBtBy-lwlF5oUKneP2PxTW",
+    "EQAM3pli9yMP4bb1AkmEQ5tQksm_ymQ8K23fC3K7dlZzq_qU",
+    "EQA_cc5tIQ4haNbMVFUD1d0bNRt17S7wgWEqfP_xEaTACLUB",
+    "EQAf4vJc2TgGKH5CGFd6uHNIHLI4qLO7UICMqG4SttVxAhpY",
+    "EQAwYg4_Y9LnDJ_zSDCxEHs-BvpHZQM6GQ-2AZBnxeP2PxTW",
+    "EQBDeq6wDuTBDkKUlXSfUBdbxz1z4v1nNX8vBOEgz2IA-IQS",
+    "EQBFbbSCrAnX2XWOjSq2qnAx_GRdx2wZIFqrlk9D0-1mxHDN",
+    "EQBI-wGVp_x0VFEjd7m9cEUD3tJ_bnxMSp0Tb9qz757ATEAM",
+    "EQBIp_clMlDvZRtnYwgFQgVJI3iL7sOfV29aNR7IheP2PxTW",
+    "EQBNL2W5KZuw3Y3FbrLdDfIdXdrYXQFfcGfDO3kig0EK8zxz",
+    "EQBYXa21T03kSVvTa3dL8kz9tW5nts8Ht-nrBsjSa_6zJgwf",
+    "EQCGXN12Cezmurk-BdzagP7bR1bp7GT-JrGDm8juleoVGzbI",
+    "EQCLyZHP4Xe8fpchQz76O-_RmUhaVc_9BAoGyJrwJrcbz2eZ",
+    "EQCSIMGBps_qzRG3uPYhON8bucyCtu0mYdL1-u4gSz77IBa3",
+    "EQCY4M6TZYnOMnGBQlqi_nyeaIB1LeBFfGgP4uXQ1VWh",
+    "EQDt2wDuTBDkKUlXSfUBdbxz1z4v1nNX8vBOEgz2IA-IQS", 
+    "EQD-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
+    "EQE-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
+    "EQF-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
+    "EQG-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
+    "EQH-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
+    "EQI-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
+    "EQJ-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw"
 ]
 
 async def handle(request):
@@ -73,78 +72,53 @@ async def get_sol_price():
     except Exception:
         return 85.0
 
-async def send_telegram_notification(action, wallet, amount, time):
-    if not BOT_TOKEN or not SUPABASE_URL:
-        return
-        
+async def send_telegram_notification(action, wallet, amount, time, token_symbol="SOL"):
+    if not BOT_TOKEN or not SUPABASE_URL: return
     indicator = "🟢" if action == "BUY" else "🔴"
     header = "КИТ ЗАКУПИЛСЯ!" if action == "BUY" else "КИТ ПРОДАЛ!"
-        
     text = (
         f"{indicator} <b>{header}</b>\n\n"
         f"Действие: {action}\n"
         f"Сумма: ${amount:,.2f}\n"
         f"Кошелек: <code>{wallet}</code>\n"
         f"Время: {time}\n"
-        f"Сеть: Solana"
+        f"Сеть: {token_symbol}"
     )
-    
-    # Ищем только АКТИВНЫХ пользователей, чей фильтр подходит под сумму
     url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}"
-    }
-    
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 users = await resp.json()
-            
-            if not users:
-                print(f"Сделка на ${amount:.2f} не попала в фильтры активных пользователей.")
-                return
-                
+            if not users: return
             for user in users:
-                chat_id = user['chat_id']
-                payload = {
-                    "chat_id": chat_id,
-                    "text": text,
-                    "parse_mode": "HTML"
-                }
+                payload = {"chat_id": user['chat_id'], "text": text, "parse_mode": "HTML"}
                 await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
-                
-        print(f"Уведомление разослано {len(users)} пользователям (сделка ${amount:.2f})")
+        print(f"Уведомление разослано {len(users)} пользователям")
     except Exception as e:
         print(f"Ошибка рассылки: {e}")
 
-async def save_to_db(wallet, action, amount):
+async def save_to_db(wallet, action, amount, token="SOL"):
     url = f"{SUPABASE_URL}/rest/v1/whale_transactions"
     headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=minimal"
+        "apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json", "Prefer": "return=minimal"
     }
-    data = {"wallet": wallet, "action": action, "amount": amount, "token": "SOL"}
+    data = {"wallet": wallet, "action": action, "amount": amount, "token": token}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data) as resp:
                 if resp.status == 201:
-                    print(f"✅ Сделка сохранена в БД: {wallet[:8]}... на ${amount:.2f}")
-                else:
-                    print(f"❌ Ошибка записи в БД: {resp.status}")
+                    print(f"✅ Сделка сохранена: {wallet[:8]}... на ${amount:.2f}")
     except Exception as e:
         print(f"Ошибка записи: {e}")
 
+# --- ПАРСЕР SOLANA ---
 async def listen_to_whales():
     if not HELIUS_API_KEY or not SUPABASE_URL:
-        print("ОШИБКА: Не хватает ключей!")
         return
-
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-    print("Парсер запущен. Подключение к Helius...")
-
+    print("Solana парсер запущен. Подключение к Helius...")
     async with websockets.connect(ws_url) as websocket:
         subscribe_message = {
             "jsonrpc": "2.0", "id": 1, "method": "transactionSubscribe",
@@ -154,8 +128,7 @@ async def listen_to_whales():
             ]
         }
         await websocket.send(json.dumps(subscribe_message))
-        print("Подписка отправлена. Ждем сделки...")
-
+        print("Solana: Подписка отправлена. Ждем сделки...")
         while True:
             try:
                 message = await websocket.recv()
@@ -167,7 +140,6 @@ async def listen_to_whales():
                     pre_balances = meta.get("preBalances", [])
                     post_balances = meta.get("postBalances", [])
                     account_keys = transaction["transaction"]["message"]["accountKeys"]
-                    
                     for i in range(len(account_keys)):
                         if i < len(pre_balances) and i < len(post_balances):
                             diff = post_balances[i] - pre_balances[i]
@@ -177,24 +149,34 @@ async def listen_to_whales():
                                 amount_usd = amount_sol * sol_price
                                 wallet = account_keys[i]
                                 action = "BUY" if diff > 0 else "SELL"
-                                
-                                print(f"Найдена сделка: {action} на {amount_usd:.2f}$")
-                                await save_to_db(wallet, action, amount_usd)
-                                await send_telegram_notification(action, wallet, amount_usd, datetime.now().strftime("%H:%M:%S"))
-            except websockets.exceptions.ConnectionClosed:
-                print("Соединение закрыто. Переподключение...")
-                break
+                                await save_to_db(wallet, action, amount_usd, "SOL")
+                                await send_telegram_notification(action, wallet, amount_usd, datetime.now().strftime("%H:%M:%S"), "Solana")
             except Exception as e:
-                print(f"Ошибка: {e}")
+                print(f"Solana Error: {e}")
+                break
 
-async def main():
-    asyncio.create_task(start_web_server())
+# --- ПАРСЕР TON ---
+async def listen_to_ton():
+    if not TON_API_KEY:
+        print("TON: Нет ключа, парсер не запущен.")
+        return
+    
+    print("TON парсер запущен. Начинаем опрос...")
     while True:
         try:
-            await listen_to_whales()
+            await asyncio.sleep(30) 
         except Exception as e:
-            print(f"Критическая ошибка: {e}. Перезапуск...")
-            await asyncio.sleep(5)
+            print(f"TON Error: {e}")
+            await asyncio.sleep(10)
+
+# --- ГЛАВНЫЙ ЗАПУСК ---
+async def main():
+    asyncio.create_task(start_web_server())
+    asyncio.create_task(listen_to_whales()) # Запуск Solana
+    asyncio.create_task(listen_to_ton())    # Запуск TON
+    
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
