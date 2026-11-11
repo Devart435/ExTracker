@@ -15,9 +15,8 @@ HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 TON_API_KEY = os.getenv("TON_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# --- SOLANA: 25 старых + 10 новых супер-активных ---
+# --- SOLANA: 35 АДРЕСОВ ---
 WHALE_WALLETS = [
-    # Твои старые (Wintermute, Jump и т.д.)
     "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
     "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
     "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt",
@@ -43,20 +42,19 @@ WHALE_WALLETS = [
     "0r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l8m",
     "1s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l8m9n",
     "2t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l8m9n0o",
-    # НОВЫЕ (Топовые трейдеры Solana)
-    "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa", # Топ-маркет-мейкер (49k сделок/сутки) [citation:15]
-    "jTcKH6sMbMMrvroaqeuM1CFmESz5zB29H5gSxNAQyNu", # Топ-трейдер
-    "4HnnBQaVw6eP52wPzaePFWR4AcFjG5cTs2EckLtJ6d6C", # Топ-трейдер
-    "3cmf1r4gMfEkj87PjLSsjkhLsp1o6VXLRWSgaeeDrdan", # Топ-трейдер
-    "Em6d5nrTF7k3M3RKXLxGLs6r7Ed8wFa2GxRdaCyeVnTn", # Топ-трейдер
-    "9eLmSbNthkdJuXgo54XZqtXzexZD28HojTrf2N2g7g4", # Топ-трейдер
-    "bobf28kwimRKWTH3Qv7HvygHvqhgRuRax21z5fyTjdE", # Топ-трейдер
-    "CLoPSvbauaaSWs1teGgLnrHHf7FuJC3xtUsZP3KwuJsw", # Топ-трейдер
-    "41zCUJsKk6cMB94DDtm99qWmyMZfp4GkAhhuz4xTwePu", # Огромный поток
-    "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9"  # Крупный поток
+    "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa", 
+    "jTcKH6sMbMMrvroaqeuM1CFmESz5zB29H5gSxNAQyNu", 
+    "4HnnBQaVw6eP52wPzaePFWR4AcFjG5cTs2EckLtJ6d6C", 
+    "3cmf1r4gMfEkj87PjLSsjkhLsp1o6VXLRWSgaeeDrdan", 
+    "Em6d5nrTF7k3M3RKXLxGLs6r7Ed8wFa2GxRdaCyeVnTn", 
+    "9eLmSbNthkdJuXgo54XZqtXzexZD28HojTrf2N2g7g4", 
+    "bobf28kwimRKWTH3Qv7HvygHvqhgRuRax21z5fyTjdE", 
+    "CLoPSvbauaaSWs1teGgLnrHHf7FuJC3xtUsZP3KwuJsw", 
+    "41zCUJsKk6cMB94DDtm99qWmyMZfp4GkAhhuz4xTwePu", 
+    "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9"  
 ]
 
-# --- TON: 25 адресов ---
+# --- TON: 25 АДРЕСОВ ---
 TON_WHALE_WALLETS = [
     "EQA-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
     "EQAI7sfVjEv0ywHV2SbP-9bhdDJ8-Z0k1BpxM0WleeP2PxTW",
@@ -144,6 +142,8 @@ async def save_to_db(wallet, action, amount, token="SOL"):
             async with session.post(url, headers=headers, json=data) as resp:
                 if resp.status == 201:
                     print(f"✅ Сделка сохранена: {wallet[:8]}... на ${amount:.2f}")
+                else:
+                    print(f"❌ Ошибка БД: {resp.status}")
     except Exception as e:
         print(f"Ошибка записи: {e}")
 
@@ -188,7 +188,7 @@ async def listen_to_whales():
                 print(f"Solana Error: {e}")
                 break
 
-# --- TON ПАРСЕР (РЕАЛЬНЫЙ ОПРОС) ---
+# --- TON ПАРСЕР (С ИСПРАВЛЕНИЕМ) ---
 async def listen_to_ton():
     if not TON_API_KEY:
         print("TON: Нет ключа, парсер не запущен.")
@@ -197,9 +197,7 @@ async def listen_to_ton():
     print("TON парсер запущен. Начинаем реальный опрос...")
     while True:
         try:
-            # Проходим по всем кошелькам TON и проверяем последние транзакции
             for wallet in TON_WHALE_WALLETS:
-                # Используем API toncenter для получения последних транзакций
                 url = f"https://toncenter.com/api/v2/getTransactions?address={wallet}&limit=1&api_key={TON_API_KEY}"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url) as resp:
@@ -207,28 +205,28 @@ async def listen_to_ton():
                             data = await resp.json()
                             if data.get("ok") and data.get("result"):
                                 for tx in data["result"]:
-                                    # Проверяем, что транзакция свежая (за последние 5 минут)
-                                    tx_time = int(tx.get("utime", 0))
-                                    now = int(datetime.now().timestamp())
-                                    if now - tx_time < 300: 
-                                        # Извлекаем сумму в TON (value в нанотонах)
-                                        value_nano = int(tx.get("in_msg", {}).get("value", 0))
-                                        if value_nano > 0:
-                                            amount_ton = value_nano / 1_000_000_000
-                                            # Примерный курс TON к USD (можно потом заменить на реальный)
-                                            ton_price = 5.5 
-                                            amount_usd = amount_ton * ton_price
-                                            
-                                            if amount_usd > 100: # Фильтр: сделки больше $100
-                                                print(f"TON Найдена сделка: {amount_usd:.2f}$")
-                                                # Определяем, куда идет (BUY/SELL) - упрощенно, если входящая - BUY
-                                                action = "BUY" if tx.get("in_msg") else "SELL"
-                                                await save_to_db(wallet, action, amount_usd, "TON")
-                                                await send_telegram_notification(action, wallet, amount_usd, datetime.now().strftime("%H:%M:%S"), "TON")
+                                    try:
+                                        tx_time = int(tx.get("utime", 0))
+                                        now = int(datetime.now().timestamp())
+                                        if now - tx_time < 300: 
+                                            in_msg = tx.get("in_msg", {})
+                                            if not isinstance(in_msg, dict):
+                                                continue
+                                            value_nano = int(in_msg.get("value", 0))
+                                            if value_nano > 0:
+                                                amount_ton = value_nano / 1_000_000_000
+                                                ton_price = 5.5 
+                                                amount_usd = amount_ton * ton_price
+                                                if amount_usd > 10: 
+                                                    print(f"TON Найдена сделка: {amount_usd:.2f}$")
+                                                    action = "BUY" if in_msg else "SELL"
+                                                    await save_to_db(wallet, action, amount_usd, "TON")
+                                                    await send_telegram_notification(action, wallet, amount_usd, datetime.now().strftime("%H:%M:%S"), "TON")
+                                    except Exception as tx_error:
+                                        print(f"TON TX Error: {tx_error}")
         except Exception as e:
             print(f"TON Error: {e}")
-        
-        await asyncio.sleep(15) # Опрос каждые 15 секунд
+        await asyncio.sleep(15) 
 
 # --- ГЛАВНЫЙ ЗАПУСК ---
 async def main():
