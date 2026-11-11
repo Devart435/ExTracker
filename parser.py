@@ -9,7 +9,6 @@ from datetime import datetime
 
 sys.stdout.reconfigure(line_buffering=True)
 
-# --- БЕЗОПАСНАЯ ЗАГРУЗКА URL ---
 _raw_supabase = os.getenv("SUPABASE_URL", "")
 SUPABASE_URL = _raw_supabase.replace("/rest/v1/", "").replace("/rest/v1", "").rstrip("/")
 
@@ -97,8 +96,15 @@ async def send_telegram_notification(action, wallet, amount, time, token_symbol,
                 if not isinstance(users, list): return
                 for u in users:
                     if u.get('chat_id'):
-                        await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML"})
-    except Exception as e: pass
+                        send_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                        payload = {"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML"}
+                        async with session.post(send_url, json=payload) as tg_resp:
+                            if tg_resp.status == 200:
+                                print(f"📨 Уведомление отправлено пользователю {u['chat_id']}")
+                            else:
+                                print(f"⚠️ Ошибка отправки: {await tg_resp.text()}")
+    except Exception as e: 
+        print(f"Ошибка рассылки: {e}")
 
 async def listen_to_solana():
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
@@ -122,11 +128,13 @@ async def listen_to_solana():
                                 wallet_addr = keys[i] if isinstance(keys[i], str) else keys[i].get("pubkey", "")
                                 await save_to_db(wallet_addr, action, amount, "SOL", "Solana")
                                 await send_telegram_notification(action, wallet_addr, amount, datetime.now().strftime("%H:%M:%S"), "SOL", "Solana")
-            except: break
+            except Exception as e: 
+                print(f"Solana WS error: {e}")
+                break
 
 async def listen_to_ton():
     print("TON парсер запущен...")
-    processed_txs = set() # Защита от дублей
+    processed_txs = set()
     
     while True:
         for wallet in TON_WHALE_WALLETS:
@@ -141,31 +149,19 @@ async def listen_to_ton():
                                     if tx_hash in processed_txs: continue
                                     
                                     utime = int(tx.get("utime", 0))
-                                    if int(datetime.now().timestamp()) - utime > 300: continue # Только свежие (5 мин)
+                                    if int(datetime.now().timestamp()) - utime > 300: continue
                                     
                                     in_msg = tx.get("in_msg", {})
                                     
-                                    # 1. Нативный TON
                                     if isinstance(in_msg, dict) and int(in_msg.get("value", 0)) > 0:
                                         amount = (int(in_msg["value"]) / 1_000_000_000) * 5.5
-                                        # Фильтр: от 10к до 500к $. Технические переводы (миллионы) отсекаем.
+                                        
                                         if 10_000 < amount < 500_000:
                                             processed_txs.add(tx_hash)
                                             print(f"✅ TON Сделка: ${amount:.2f}")
                                             await save_to_db(wallet, "BUY", amount, "TON", "TON")
                                             await send_telegram_notification("BUY", wallet, amount, datetime.now().strftime("%H:%M:%S"), "TON", "TON")
-                                    
-                                    # 2. Jettons (Токены TON) - ищем в out_msgs или body
-                                    if isinstance(in_msg, dict) and "msg_data" in in_msg:
-                                        msg_data = in_msg.get("msg_data", {})
-                                        body = msg_data.get("body", "")
-                                        # Если есть body, значит это может быть Jetton (op 0x0f8a7ea5)
-                                        if body and "te6cc" in body: 
-                                            # Тут мы не можем посчитать сумму без декодирования BOC,
-                                            # но мы хотя бы ловим событие и пишем токен как JETTON (пока без суммы)
-                                            # Позже добавим запрос к tonapi.io для расшифровки
-                                            pass
-            except Exception as e:
+            except Exception:
                 pass
         await asyncio.sleep(10)
 
