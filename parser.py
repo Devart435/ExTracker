@@ -15,16 +15,40 @@ HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 WHALE_WALLETS = [
-    # Wintermute (Primary MM)
-    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP",
-    # Jump Trading
-    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
-    # DWF Labs
-    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt",
-    # Raydium Liquidity Pool V4 (через него идут тонны транзакций)
-    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
-    # Еще один супер-активный кошелек (маркет-мейкер)
-    "YubFizptp3MXUAtZmqkRS9DyCkMeZaVwiaRCGBTxayo"
+    # === 1. МАРКЕТ-МЕЙКЕРЫ (Подтвержденные) ===
+    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", # Wintermute (Primary MM) [citation:3]
+    "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa", # Wintermute (Market Making) [citation:3]
+    "BMnT51N4iSNhWU5PyFFgWwFvN1jgaiiDr9ZHgnkm3iLJ", # Wintermute (OTC/Trading) [citation:3]
+    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm", # Jump Trading [citation:3]
+    "6v3snejEvRsTzeUZV2yKAcRgbxRz3iMJJgpeqJ1CxM6P", # Jump Capital [citation:3]
+    "5pU7WKL47At6rHLM4CmFCSPRdT32J1LHSgPFhWGuXZqc", # Jump Capital [citation:3]
+    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt", # DWF Labs (Official) [citation:3]
+    "B5dWf97VwfKumCT377Nh8rC51qoi7o5tYou3ZNzrR3P3", # DWF Labs (Suspected) [citation:3]
+    
+    # === 2. ПРОГРАММЫ (Генерируют тонны транзакций) ===
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", # Raydium AMM v4 [citation:4][citation:8]
+    "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK", # Raydium CLMM [citation:4][citation:8]
+    
+    # === 3. КРУПНЕЙШИЕ ТРЕЙДЕРЫ (Из Dune Analytics) ===
+    "jTcKH6sMbMMrvroaqeuM1CFmESz5zB29H5gSxNAQyNu", # Топ-трейдер (объем $74M+ за 7 дней) [citation:11][citation:14]
+    "4HnnBQaVw6eP52wPzaePFWR4AcFjG5cTs2EckLtJ6d6C", # Топ-трейдер (объем $32M+) [citation:11][citation:14]
+    "3cmf1r4gMfEkj87PjLSsjkhLsp1o6VXLRWSgaeeDrdan", # Топ-трейдер (объем $15M+) [citation:11][citation:14]
+    "Em6d5nrTF7k3M3RKXLxGLs6r7Ed8wFa2GxRdaCyeVnTn", # Топ-трейдер (объем $14M+) [citation:11][citation:14]
+    "9eLmSbNthkdJuXgo54XZqtXzexZD28HojTrf2N2g7g4", # Топ-трейдер (объем $12M+) [citation:11][citation:14]
+    "bobf28kwimRKWTH3Qv7HvygHvqhgRuRax21z5fyTjdE", # Топ-трейдер (объем $11M+) [citation:11][citation:14]
+    "CLoPSvbauaaSWs1teGgLnrHHf7FuJC3xtUsZP3KwuJsw", # Топ-трейдер (объем $9.8M+) [citation:11][citation:14]
+    
+    # === 4. КРУПНЫЕ СТЕЙКЕРЫ / ХОЛДЕРЫ ===
+    "MJKqp326RZCHnAAbew9MDdui3iCKWco7fsK9sVuZTX2", # Топ-1 стейкер (5.1M SOL) [citation:1]
+    "52C9T2T7JRojtxumYnYZhyUmrN7kqzvCLc4Ksvjk7TxD", # Топ-2 стейкер (4.3M SOL) [citation:1]
+    "8BseXT9EtoEhBTKFFYkwTnjKSUZwhtmdKY2Jrj8j45Rt", # Топ-3 стейкер (3.9M SOL) [citation:1]
+    "GitYucwpNcg6Dx1Y15UQ9TQn8LZMX1uuqQNn8rXxEWNC", # Kraken Staking [citation:1]
+    "9QgXqrgdbVU8KcpfskqJpAXKzbaYQJecgMAruSWoXDkM", # Топ-5 стейкер (3.1M SOL) [citation:1]
+    
+    # === 5. АКТИВНЫЕ ТРЕЙДЕРЫ (Из Dune) ===
+    "41zCUJsKk6cMB94DDtm99qWmyMZfp4GkAhhuz4xTwePu", # Огромный поток ($5.9B+) [citation:6]
+    "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9", # Крупный поток ($2.8B+) [citation:6]
+    "3ADzk5YDP9sgorvPSs9YPxigJiSqhgddpwHwwPwmEFib"  # Крупный поток ($2B+) [citation:6]
 ]
 
 async def handle(request):
