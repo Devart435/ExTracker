@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import websockets
 import aiohttp
 from aiohttp import web
@@ -17,42 +18,39 @@ HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 TON_API_KEY = os.getenv("TON_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-WHALE_WALLETS = [
-    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
-    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt", "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-    "H8sMJSCQxfKiFTCfDR3DUMLPwcRbM61LGFJ8N4dK3WjS", "3ka1q7z7XjGfKjJ8s9F5s4a3D2e1R4t5Y6u7I8o9P0a",
-    "4b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w", "5c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x",
-    "6d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y", "7e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z",
-    "8f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a", "9g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b",
-    "0h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c", "1i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d",
-    "2j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e", "3k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f",
-    "4l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g", "5m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h",
-    "6n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i", "7o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j",
-    "8p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k", "9q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l",
-    "0r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l8m", "1s9t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l8m9n",
-    "2t0u1v2w3x4y5z6a7b8c9d0e1f2g3h4i5j6k7l8m9n0o", "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa",
-    "jTcKH6sMbMMrvroaqeuM1CFmESz5zB29H5gSxNAQyNu", "4HnnBQaVw6eP52wPzaePFWR4AcFjG5cTs2EckLtJ6d6C",
-    "3cmf1r4gMfEkj87PjLSsjkhLsp1o6VXLRWSgaeeDrdan", "Em6d5nrTF7k3M3RKXLxGLs6r7Ed8wFa2GxRdaCyeVnTn",
-    "9eLmSbNthkdJuXgo54XZqtXzexZD28HojTrf2N2g7g4", "bobf28kwimRKWTH3Qv7HvygHvqhgRuRax21z5fyTjdE",
-    "CLoPSvbauaaSWs1teGgLnrHHf7FuJC3xtUsZP3KwuJsw", "41zCUJsKk6cMB94DDtm99qWmyMZfp4GkAhhuz4xTwePu",
-    "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9"
-]
+# --- КЭШ ЦЕН ---
+price_cache = {"TON": 0.0, "SOL": 0.0, "last_update": 0}
 
-TON_WHALE_WALLETS = [
-    "EQA-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw", "EQAI7sfVjEv0ywHV2SbP-9bhdDJ8-Z0k1BpxM0WleeP2PxTW",
-    "EQAL1QRD508kA3pYrYaLID7Xr5wBtBy-lwlF5oUKneP2PxTW", "EQAM3pli9yMP4bb1AkmEQ5tQksm_ymQ8K23fC3K7dlZzq_qU",
-    "EQA_cc5tIQ4haNbMVFUD1d0bNRt17S7wgWEqfP_xEaTACLUB", "EQAf4vJc2TgGKH5CGFd6uHNIHLI4qLO7UICMqG4SttVxAhpY",
-    "EQAwYg4_Y9LnDJ_zSDCxEHs-BvpHZQM6GQ-2AZBnxeP2PxTW", "EQBDeq6wDuTBDkKUlXSfUBdbxz1z4v1nNX8vBOEgz2IA-IQS",
-    "EQBFbbSCrAnX2XWOjSq2qnAx_GRdx2wZIFqrlk9D0-1mxHDN", "EQBI-wGVp_x0VFEjd7m9cEUD3tJ_bnxMSp0Tb9qz757ATEAM",
-    "EQBIp_clMlDvZRtnYwgFQgVJI3iL7sOfV29aNR7IheP2PxTW", "EQBNL2W5KZuw3Y3FbrLdDfIdXdrYXQFfcGfDO3kig0EK8zxz",
-    "EQBYXa21T03kSVvTa3dL8kz9tW5nts8Ht-nrBsjSa_6zJgwf", "EQCGXN12Cezmurk-BdzagP7bR1bp7GT-JrGDm8juleoVGzbI",
-    "EQCLyZHP4Xe8fpchQz76O-_RmUhaVc_9BAoGyJrwJrcbz2eZ", "EQCSIMGBps_qzRG3uPYhON8bucyCtu0mYdL1-u4gSz77IBa3",
-    "EQCY4M6TZYnOMnGBQlqi_nyeaIB1LeBFfGgP4uXQ1VWh", "EQDt2wDuTBDkKUlXSfUBdbxz1z4v1nNX8vBOEgz2IA-IQS",
-    "EQD-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw", "EQE-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
-    "EQF-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw", "EQG-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
-    "EQH-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw", "EQI-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
-    "EQJ-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw"
-]
+async def update_prices():
+    global price_cache
+    if time.time() - price_cache["last_update"] < 60: return
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get('https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT') as r_ton, \
+                       session.get('https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT') as r_sol:
+                data_ton = await r_ton.json()
+                data_sol = await r_sol.json()
+                price_cache["TON"] = float(data_ton['price'])
+                price_cache["SOL"] = float(data_sol['price'])
+                price_cache["last_update"] = time.time()
+                print(f"💰 Цены обновлены: TON=${price_cache['TON']:.3f}, SOL=${price_cache['SOL']:.2f}")
+    except Exception as e:
+        print(f"Ошибка получения цен: {e}")
+
+# --- ПОЛУЧЕНИЕ ИНФО О ТОКЕНЕ TON (JETTON) ---
+async def get_jetton_info(jetton_master):
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://tonapi.io/v2/jettons/{jetton_master}"
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    symbol = data.get("metadata", {}).get("symbol", "UNKNOWN")
+                    price = data.get("dex_usd_price", 0.0)
+                    if price and price > 0:
+                        return symbol, price
+    except: pass
+    return "TOKEN", 0.0
 
 async def handle(request): return web.Response(text="ExTracker Parser is running...")
 
@@ -61,13 +59,6 @@ async def start_web_server():
     runner = web.AppRunner(app); await runner.setup()
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
-
-async def get_sol_price():
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get('https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT') as resp:
-                data = await resp.json(); return float(data['price'])
-    except: return 85.0
 
 async def save_to_db(wallet, action, amount, token="SOL", network="Solana"):
     if amount <= 0: return
@@ -98,18 +89,17 @@ async def send_telegram_notification(action, wallet, amount, time, token_symbol,
                     if u.get('chat_id'):
                         send_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
                         payload = {"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML"}
-                        async with session.post(send_url, json=payload) as tg_resp:
-                            if tg_resp.status == 200:
-                                print(f"📨 Уведомление отправлено пользователю {u['chat_id']}")
-                            else:
-                                print(f"⚠️ Ошибка отправки: {await tg_resp.text()}")
-    except Exception as e: 
-        print(f"Ошибка рассылки: {e}")
+                        await session.post(send_url, json=payload)
+    except Exception as e: print(f"Ошибка рассылки: {e}")
 
+# --- SOLANA ---
 async def listen_to_solana():
+    await update_prices()
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+    WHALE_WALLETS_SOL = ["5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm", "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"]
+    
     async with websockets.connect(ws_url) as ws:
-        await ws.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "transactionSubscribe", "params": [{"accountInclude": WHALE_WALLETS, "vote": False, "failed": False}, {"commitment": "confirmed", "encoding": "jsonParsed", "transactionDetails": "full", "maxSupportedTransactionVersion": 1}]}))
+        await ws.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "transactionSubscribe", "params": [{"accountInclude": WHALE_WALLETS_SOL, "vote": False, "failed": False}, {"commitment": "confirmed", "encoding": "jsonParsed", "transactionDetails": "full", "maxSupportedTransactionVersion": 1}]}))
         while True:
             try:
                 data = json.loads(await ws.recv())
@@ -118,21 +108,37 @@ async def listen_to_solana():
                     meta = tx.get("meta", {})
                     keys = tx["transaction"]["message"]["accountKeys"]
                     
+                    # Ищем SPL токены
+                    token_name = "SOL"
+                    pre_token = meta.get("preTokenBalances", [])
+                    post_token = meta.get("postTokenBalances", [])
+                    if post_token and len(post_token) > 0:
+                        # Если есть токены, берем первый (упрощенно)
+                        token_name = "SPL_TOKEN" 
+
                     for i in range(len(keys)):
                         pre, post = meta.get("preBalances", []), meta.get("postBalances", [])
                         if i < len(pre) and i < len(post):
                             diff = post[i] - pre[i]
                             if abs(diff) > 10_000_000_000: # > 10 SOL
-                                amount = (abs(diff) / 1_000_000_000) * await get_sol_price()
+                                amount = (abs(diff) / 1_000_000_000) * price_cache["SOL"]
                                 action = "BUY" if diff > 0 else "SELL"
                                 wallet_addr = keys[i] if isinstance(keys[i], str) else keys[i].get("pubkey", "")
-                                await save_to_db(wallet_addr, action, amount, "SOL", "Solana")
-                                await send_telegram_notification(action, wallet_addr, amount, datetime.now().strftime("%H:%M:%S"), "SOL", "Solana")
+                                await save_to_db(wallet_addr, action, amount, token_name, "Solana")
+                                await send_telegram_notification(action, wallet_addr, amount, datetime.now().strftime("%H:%M:%S"), token_name, "Solana")
             except Exception as e: 
                 print(f"Solana WS error: {e}")
                 break
 
+# --- TON ---
+TON_WHALE_WALLETS = [
+    "EQA-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw", "EQAI7sfVjEv0ywHV2SbP-9bhdDJ8-Z0k1BpxM0WleeP2PxTW",
+    "EQAL1QRD508kA3pYrYaLID7Xr5wBtBy-lwlF5oUKneP2PxTW", "EQAM3pli9yMP4bb1AkmEQ5tQksm_ymQ8K23fC3K7dlZzq_qU",
+    "EQA_cc5tIQ4haNbMVFUD1d0bNRt17S7wgWEqfP_xEaTACLUB", "EQAf4vJc2TgGKH5CGFd6uHNIHLI4qLO7UICMqG4SttVxAhpY"
+]
+
 async def listen_to_ton():
+    await update_prices()
     print("TON парсер запущен...")
     processed_txs = set()
     
@@ -153,14 +159,23 @@ async def listen_to_ton():
                                     
                                     in_msg = tx.get("in_msg", {})
                                     
+                                    # 1. Обычный TON
                                     if isinstance(in_msg, dict) and int(in_msg.get("value", 0)) > 0:
-                                        amount = (int(in_msg["value"]) / 1_000_000_000) * 5.5
-                                        
+                                        amount = (int(in_msg["value"]) / 1_000_000_000) * price_cache["TON"]
                                         if 10_000 < amount < 500_000:
                                             processed_txs.add(tx_hash)
-                                            print(f"✅ TON Сделка: ${amount:.2f}")
                                             await save_to_db(wallet, "BUY", amount, "TON", "TON")
                                             await send_telegram_notification("BUY", wallet, amount, datetime.now().strftime("%H:%M:%S"), "TON", "TON")
+                                    
+                                    # 2. Jettons
+                                    if isinstance(in_msg, dict) and "msg_data" in in_msg:
+                                        msg_data = in_msg.get("msg_data", {})
+                                        body = msg_data.get("body", "")
+                                        if body and "te6cc" in body:
+                                            # Упрощенный поиск Jetton Master в теле (может требовать доработки)
+                                            # Мы просто отправим запрос в tonapi, чтобы узнать, что это за токен (в тестовом режиме)
+                                            # Для продакшена тут нужен pytoniq-core для точного парсинга BOC
+                                            pass 
             except Exception:
                 pass
         await asyncio.sleep(10)
