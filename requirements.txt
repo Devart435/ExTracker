@@ -3,3 +3,4 @@ aiohttp
 websockets
 python-dotenv
 httpx
+pytoniq-core
