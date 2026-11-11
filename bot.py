@@ -15,6 +15,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 
+# Картинки
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
 IMG_SUPPORT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000aa2c821087ec3f3ea12422f6.png"
 IMG_PROFILE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000033e082109342702b717a9f88.png"
@@ -153,14 +154,14 @@ async def on_successful_payment(message: types.Message):
         await update_user_plan(message.from_user.id, "plus")
         await message.answer("✅ Оплата Stars прошла! Ваш статус обновлен на <b>PLUS</b>.", parse_mode="HTML")
 
-async def on_startup(bot: Bot):
-    print(f"Устанавливаю Webhook на {RENDER_URL}/webhook")
-    await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
-
 def main():
+    # Устанавливаем вебхук ПЕРЕД запуском сервера
+    asyncio.run(bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True))
+    
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
-    setup_application(app, dp, bot=bot, on_startup=on_startup)
+    setup_application(app, dp, bot=bot)
+    
     port = int(os.environ.get("PORT", 8080))
     web.run_app(app, host="0.0.0.0", port=port)
 
