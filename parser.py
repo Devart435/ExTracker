@@ -15,9 +15,16 @@ HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 WHALE_WALLETS = [
-    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
+    # Wintermute (Primary MM)
+    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP",
+    # Jump Trading
     "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
-    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt"
+    # DWF Labs
+    "HwDkuDCUipJHHKodBBCjffFvrjhmd4iVVh7fq25fShvt",
+    # Raydium Liquidity Pool V4 (через него идут тонны транзакций)
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+    # Еще один супер-активный кошелек (маркет-мейкер)
+    "YubFizptp3MXUAtZmqkRS9DyCkMeZaVwiaRCGBTxayo"
 ]
 
 async def handle(request):
