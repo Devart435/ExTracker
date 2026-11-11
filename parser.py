@@ -9,7 +9,11 @@ from datetime import datetime
 
 sys.stdout.reconfigure(line_buffering=True)
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+# --- БЕЗОПАСНАЯ ЗАГРУЗКА URL ---
+_raw_supabase = os.getenv("SUPABASE_URL", "")
+# Убираем лишние слэши и rest/v1, если они есть
+SUPABASE_URL = _raw_supabase.replace("/rest/v1/", "").replace("/rest/v1", "").rstrip("/")
+
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 TON_API_KEY = os.getenv("TON_API_KEY")
@@ -107,6 +111,7 @@ async def get_sol_price():
 
 async def send_telegram_notification(action, wallet, amount, time, token_symbol="SOL"):
     if not BOT_TOKEN or not SUPABASE_URL: return
+    
     indicator = "🟢" if action == "BUY" else "🔴"
     header = "КИТ ЗАКУПИЛСЯ!" if action == "BUY" else "КИТ ПРОДАЛ!"
     text = (
@@ -119,14 +124,24 @@ async def send_telegram_notification(action, wallet, amount, time, token_symbol=
     )
     url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 users = await resp.json()
-            if not users: return
-            for user in users:
-                payload = {"chat_id": user['chat_id'], "text": text, "parse_mode": "HTML"}
-                await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
+                
+                # ЗАЩИТА ОТ ОШИБКИ "string indices"
+                if not isinstance(users, list):
+                    print(f"Ошибка формата users: {users}")
+                    return
+                    
+                if len(users) == 0: return
+                
+                for user in users:
+                    chat_id = user.get('chat_id')
+                    if chat_id:
+                        payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+                        await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json=payload)
     except Exception as e:
         print(f"Ошибка рассылки: {e}")
 
@@ -137,13 +152,14 @@ async def save_to_db(wallet, action, amount, token="SOL"):
         "Content-Type": "application/json", "Prefer": "return=minimal"
     }
     data = {"wallet": wallet, "action": action, "amount": amount, "token": token}
+    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data) as resp:
                 if resp.status == 201:
                     print(f"✅ Сделка сохранена: {wallet[:8]}... на ${amount:.2f}")
                 else:
-                    print(f"❌ Ошибка БД: {resp.status}")
+                    print(f"❌ Ошибка БД: {resp.status} - {await resp.text()}")
     except Exception as e:
         print(f"Ошибка записи: {e}")
 
@@ -188,7 +204,7 @@ async def listen_to_whales():
                 print(f"Solana Error: {e}")
                 break
 
-# --- TON ПАРСЕР (С ИСПРАВЛЕНИЕМ) ---
+# --- TON ПАРСЕР ---
 async def listen_to_ton():
     if not TON_API_KEY:
         print("TON: Нет ключа, парсер не запущен.")
