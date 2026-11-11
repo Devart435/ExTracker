@@ -6,16 +6,16 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.filters import CommandStart, CommandObject
+from datetime import datetime, timezone
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBAPP_URL = os.getenv("WEBAPP_URL")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://extracker-eight.vercel.app")
 RENDER_URL = os.getenv("RENDER_URL")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 
-# ИМЯ БОТА
 BOT_USERNAME = "ExTrackerTerminalBot"
 
 IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png"
@@ -27,6 +27,7 @@ IMG_ABOUT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/b
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# --- БАЗА ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
@@ -34,12 +35,14 @@ async def save_user_to_db(user_id: int, username: str):
     async with aiohttp.ClientSession() as session:
         await session.post(url, headers=headers, json=data)
 
-async def update_user_plan(user_id: int, plan: str):
-    url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}"
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
-    data = {"plan": plan}
+async def get_user_plan(user_id: int) -> str:
+    url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}&select=plan"
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     async with aiohttp.ClientSession() as session:
-        await session.patch(url, headers=headers, json=data)
+        async with session.get(url, headers=headers) as resp:
+            data = await resp.json()
+            if data and len(data) > 0: return data[0].get("plan", "free")
+    return "free"
 
 async def check_sub(user_id: int) -> bool:
     try:
@@ -48,25 +51,23 @@ async def check_sub(user_id: int) -> bool:
     except Exception:
         return False
 
-# --- ВЕБХУК ДЛЯ CRYPTOBOT (АВТООПЛАТА) ---
+# --- ВЕБХУК CRYPTOBOT ---
 async def crypto_webhook(request):
     try:
         data = await request.json()
         if data.get("update_type") == "invoice_paid":
             invoice = data.get("payload", {})
             payload = invoice.get("payload", "")
-            
-            # Вытаскиваем ID юзера из payload (мы передавали его как pro_30d_12345678)
             if "_" in payload:
                 user_id_str = payload.split("_")[-1]
                 if user_id_str.isdigit():
                     user_id = int(user_id_str)
-                    if "pro" in payload:
-                        await update_user_plan(user_id, "pro")
-                        await bot.send_message(user_id, "✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>PRO</b>. Спасибо за поддержку!", parse_mode="HTML")
-                    elif "plus" in payload:
-                        await update_user_plan(user_id, "plus")
-                        await bot.send_message(user_id, "✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>PLUS</b>. Спасибо за поддержку!", parse_mode="HTML")
+                    plan = "pro" if "pro" in payload else "plus"
+                    url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}"
+                    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
+                    async with aiohttp.ClientSession() as session:
+                        await session.patch(url, headers=headers, json={"plan": plan})
+                        await bot.send_message(user_id, f"✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>{plan.upper()}</b>.", parse_mode="HTML")
         return web.Response(status=200)
     except Exception as e:
         print(f"Webhook Error: {e}")
@@ -91,7 +92,7 @@ async def start_with_payload(message: types.Message, command: CommandObject):
     payload = command.args
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
     if payload == "pay_pro":
-        await send_crypto_invoice(message, 5.0, "ExTracker PRO", "pro_30d")
+        await send_crypto_invoice(message, 9.0, "ExTracker PRO", "pro_30d")
     elif payload == "pay_plus":
         await send_crypto_invoice(message, 20.0, "ExTracker Plus", "plus_30d")
     else:
@@ -117,10 +118,24 @@ async def check_sub_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("Вы все еще не подписаны на канал!", show_alert=True)
 
+@dp.callback_query(F.data.startswith("mute_whale:"))
+async def mute_whale(callback: types.CallbackQuery):
+    wallet = callback.data.split(":")[1]
+    url = f"{SUPABASE_URL}/rest/v1/muted_whales"
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
+    data = {"chat_id": callback.from_user.id, "wallet": wallet}
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(url, headers=headers, json=data)
+        await callback.answer("Кит добавлен в черный список!")
+    except:
+        await callback.answer("Ошибка при добавлении в ЧС.", show_alert=True)
+
 @dp.callback_query(F.data == "profile")
 async def profile(callback: types.CallbackQuery):
+    plan = await get_user_plan(callback.from_user.id)
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
-    text = f"<b>Профиль пользователя</b>\n\nID: <code>{callback.from_user.id}</code>\nСтатус: <b>FREE</b>\nЛимит сессии: <b>3 часа</b>"
+    text = f"<b>Профиль пользователя</b>\n\nID: <code>{callback.from_user.id}</code>\nСтатус: <b>{plan.upper()}</b>\nЛимит сессии: <b>{'24/7' if plan != 'free' else '3 часа'}</b>"
     try:
         await callback.message.answer_photo(photo=IMG_PROFILE, caption=text, reply_markup=back_kb, parse_mode="HTML")
     except Exception:
@@ -140,7 +155,7 @@ async def support(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "about")
 async def about(callback: types.CallbackQuery):
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
-    text = "<b>О проекте ExTracker</b>\n\nExTracker — профессиональная инфраструктура для ончейн-аналитики. Мониторим 100+ кошельков.\n\n<b>Наши ресурсы:</b>\n@extracker_ru\n@extracker_community"
+    text = "<b>О проекте ExTracker</b>\n\nExTracker — профессиональная инфраструктура для ончейн-аналитики."
     try:
         await callback.message.answer_photo(photo=IMG_ABOUT, caption=text, reply_markup=back_kb, parse_mode="HTML")
     except Exception:
@@ -156,17 +171,8 @@ async def back_to_start(callback: types.CallbackQuery):
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
-    # Передаем ID пользователя в payload
     payload_with_id = f"{payload}_{message.from_user.id}"
-    data = {
-        "asset": "USDT", 
-        "amount": str(amount_usd), 
-        "description": title, 
-        "payload": payload_with_id, 
-        "expires_in": 3600,
-        "allow_comments": False,
-        "allow_anonymous": False
-    }
+    data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": payload_with_id, "expires_in": 3600}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
@@ -178,17 +184,14 @@ async def send_crypto_invoice(message: types.Message, amount_usd: float, title: 
                 else:
                     await message.answer("Ошибка создания счета.")
     except Exception as e:
-        print(f"CryptoBot Error: {e}")
         await message.answer("Ошибка сервера.")
 
 def main():
     asyncio.run(bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True))
-    
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
     app.router.add_post("/crypto_webhook", crypto_webhook)
     setup_application(app, dp, bot=bot)
-    
     port = int(os.environ.get("PORT", 8080))
     web.run_app(app, host="0.0.0.0", port=port)
 
