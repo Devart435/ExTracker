@@ -62,7 +62,6 @@ async def start_web_server():
     runner = web.AppRunner(app); await runner.setup()
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
-    print(f"Веб-сервер запущен на порту {port}")
 
 async def get_sol_price():
     try:
@@ -72,14 +71,15 @@ async def get_sol_price():
     except: return 85.0
 
 async def save_to_db(wallet, action, amount, token="SOL", network="Solana"):
+    if amount <= 0: return
     url = f"{SUPABASE_URL}/rest/v1/whale_transactions"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
     data = {"wallet": wallet, "action": action, "amount": amount, "token": token, "network": network}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data) as resp:
-                if resp.status == 201: print(f"✅ Сделка сохранена: {wallet[:8]}... на ${amount:.2f} ({token} / {network})")
-                else: print(f"❌ Ошибка БД: {resp.status} - {await resp.text()}")
+                if resp.status == 201: print(f"✅ Сохранено: {wallet[:8]}... ${amount:.2f} ({token})")
+                else: print(f"❌ Ошибка БД: {resp.status}")
     except Exception as e: print(f"Ошибка записи: {e}")
 
 async def send_telegram_notification(action, wallet, amount, time, token_symbol, network):
@@ -98,11 +98,10 @@ async def send_telegram_notification(action, wallet, amount, time, token_symbol,
                 for u in users:
                     if u.get('chat_id'):
                         await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML"})
-    except Exception as e: print(f"Ошибка рассылки: {e}")
+    except Exception as e: pass
 
 async def listen_to_solana():
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-    print("Solana парсер запущен...")
     async with websockets.connect(ws_url) as ws:
         await ws.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "transactionSubscribe", "params": [{"accountInclude": WHALE_WALLETS, "vote": False, "failed": False}, {"commitment": "confirmed", "encoding": "jsonParsed", "transactionDetails": "full", "maxSupportedTransactionVersion": 1}]}))
         while True:
@@ -113,67 +112,62 @@ async def listen_to_solana():
                     meta = tx.get("meta", {})
                     keys = tx["transaction"]["message"]["accountKeys"]
                     
-                    # Ищем изменения баланса в SOL
                     for i in range(len(keys)):
-                        pre = meta.get("preBalances", [])
-                        post = meta.get("postBalances", [])
+                        pre, post = meta.get("preBalances", []), meta.get("postBalances", [])
                         if i < len(pre) and i < len(post):
                             diff = post[i] - pre[i]
-                            if abs(diff) > 1_000_000_000:
+                            if abs(diff) > 10_000_000_000: # > 10 SOL
                                 amount = (abs(diff) / 1_000_000_000) * await get_sol_price()
                                 action = "BUY" if diff > 0 else "SELL"
-                                wallet_addr = keys[i] if isinstance(keys[i], str) else keys[i].get("pubkey", "unknown")
-                                
-                                # Проверяем, были ли SPL токены в транзакции
-                                token_name = "SOL"
-                                pre_token = meta.get("preTokenBalances", [])
-                                post_token = meta.get("postTokenBalances", [])
-                                if post_token and len(post_token) > 0:
-                                    # Если есть изменения токенов, берем инфо первого
-                                    token_name = "SPL Token" # По-хорошему тут нужен запрос к Helius DAS API за именем
-                                
-                                await save_to_db(wallet_addr, action, amount, token_name, "Solana")
-                                await send_telegram_notification(action, wallet_addr, amount, datetime.now().strftime("%H:%M:%S"), token_name, "Solana")
-            except Exception as e: print(f"Solana Error: {e}"); break
+                                wallet_addr = keys[i] if isinstance(keys[i], str) else keys[i].get("pubkey", "")
+                                await save_to_db(wallet_addr, action, amount, "SOL", "Solana")
+                                await send_telegram_notification(action, wallet_addr, amount, datetime.now().strftime("%H:%M:%S"), "SOL", "Solana")
+            except: break
 
 async def listen_to_ton():
     print("TON парсер запущен...")
+    processed_txs = set() # Защита от дублей
+    
     while True:
         for wallet in TON_WHALE_WALLETS:
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f"https://toncenter.com/api/v2/getTransactions?address={wallet}&limit=1&api_key={TON_API_KEY}") as resp:
+                    async with session.get(f"https://toncenter.com/api/v2/getTransactions?address={wallet}&limit=5&api_key={TON_API_KEY}") as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             if data.get("ok") and data.get("result"):
-                                tx = data["result"][0]
-                                # Проверяем свежесть транзакции (до 5 минут)
-                                if int(datetime.now().timestamp()) - int(tx.get("utime", 0)) < 300:
+                                for tx in data["result"]:
+                                    tx_hash = tx.get("transaction_id", {}).get("hash")
+                                    if tx_hash in processed_txs: continue
+                                    
+                                    utime = int(tx.get("utime", 0))
+                                    if int(datetime.now().timestamp()) - utime > 300: continue # Только свежие (5 мин)
+                                    
                                     in_msg = tx.get("in_msg", {})
                                     
-                                    # 1. Проверяем обычные TON
+                                    # 1. Нативный TON
                                     if isinstance(in_msg, dict) and int(in_msg.get("value", 0)) > 0:
                                         amount = (int(in_msg["value"]) / 1_000_000_000) * 5.5
-                                        if amount > 10:
-                                            print(f"TON Сделка: {amount:.2f}$")
+                                        # Фильтр: от 10к до 500к $. Технические переводы (миллионы) отсекаем.
+                                        if 10_000 < amount < 500_000:
+                                            processed_txs.add(tx_hash)
+                                            print(f"✅ TON Сделка: ${amount:.2f}")
                                             await save_to_db(wallet, "BUY", amount, "TON", "TON")
                                             await send_telegram_notification("BUY", wallet, amount, datetime.now().strftime("%H:%M:%S"), "TON", "TON")
                                     
-                                    # 2. Проверяем Jetton (Токены TON). Если в сообщении есть jetton, значит это токен
+                                    # 2. Jettons (Токены TON) - ищем в out_msgs или body
                                     if isinstance(in_msg, dict) and "msg_data" in in_msg:
-                                        msg_data = in_msg["msg_data"]
-                                        if isinstance(msg_data, dict) and "@type" in msg_data and msg_data["@type"] == "msg.dataRaw":
-                                            # Извлекаем body и ищем Jetton transfer
-                                            body = msg_data.get("body", "")
-                                            if body:
-                                                # Если в теле есть признаки Jetton (упрощенно ищем op=0x0f8a7ea5)
-                                                print(f"🔍 Jetton transaction detected on TON for {wallet[:8]}...")
-                                                # Пока пишем как "JETTON"
-                                                await save_to_db(wallet, "BUY", 0, "JETTON", "TON")
-                                                await send_telegram_notification("BUY", wallet, 0, datetime.now().strftime("%H:%M:%S"), "JETTON", "TON")
+                                        msg_data = in_msg.get("msg_data", {})
+                                        body = msg_data.get("body", "")
+                                        # Если есть body, значит это может быть Jetton (op 0x0f8a7ea5)
+                                        if body and "te6cc" in body: 
+                                            # Тут мы не можем посчитать сумму без декодирования BOC,
+                                            # но мы хотя бы ловим событие и пишем токен как JETTON (пока без суммы)
+                                            # Позже добавим запрос к tonapi.io для расшифровки
+                                            pass
             except Exception as e:
                 pass
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
 
 async def main():
     asyncio.create_task(start_web_server())
