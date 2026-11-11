@@ -5,7 +5,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, CommandObject
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBAPP_URL = os.getenv("WEBAPP_URL")
@@ -25,7 +25,7 @@ IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/b
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- ФУНКЦИИ БАЗЫ ДАННЫХ ---
+# --- БАЗА ДАННЫХ ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
@@ -60,6 +60,19 @@ async def show_main_menu(message: types.Message):
     except Exception:
         await message.answer(caption, reply_markup=kb, parse_mode="HTML")
 
+# --- СТАРТ С ПАРАМЕТРОМ (DEEP LINK) ---
+@dp.message(CommandStart(deep_link=True))
+async def start_with_payload(message: types.Message, command: CommandObject):
+    payload = command.args
+    await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
+    
+    if payload == "pay_pro":
+        await send_crypto_invoice(message, 5.0, "ExTracker PRO", "pro_30d")
+    elif payload == "pay_plus":
+        await send_crypto_invoice(message, 20.0, "ExTracker Plus", "plus_30d")
+    else:
+        await start(message)
+
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
@@ -80,10 +93,9 @@ async def check_sub_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("Вы все еще не подписаны на канал!", show_alert=True)
 
-# --- ПРОФИЛЬ И ПОДДЕРЖКА ---
+# --- ПРОФИЛЬ / ПОДДЕРЖКА / О НАС ---
 @dp.callback_query(F.data == "profile")
 async def profile(callback: types.CallbackQuery):
-    # Получаем текущий план из базы (упрощенно, для примера)
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back")]])
     text = f"<b>Профиль пользователя</b>\n\nID: <code>{callback.from_user.id}</code>\nСтатус: <b>FREE</b>\nЛимит сессии: <b>3 часа</b>"
     try:
@@ -118,19 +130,24 @@ async def back_to_start(callback: types.CallbackQuery):
     await show_main_menu(callback.message)
     await callback.answer()
 
-# --- ОПЛАТА STAR ---
-@dp.callback_query(F.data == "pay_stars_pro")
-async def pay_stars_pro(callback: types.CallbackQuery):
-    prices = [LabeledPrice(label="XTR", amount=250)] # 250 Stars (примерно $5)
-    await callback.message.answer_invoice(
-        title="ExTracker PRO",
-        description="Доступ к PRO-тарифу на 30 дней",
-        prices=prices,
-        provider_token="",
-        currency="XTR",
-        payload="pro_30d"
-    )
-    await callback.answer()
+# --- ОПЛАТА (CRYPTO + STARS) ---
+async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
+    url = "https://pay.crypt.bot/api/createInvoice"
+    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
+    data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": payload, "expires_in": 3600}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=data, headers=headers) as resp:
+                res = await resp.json()
+                if res.get("ok"):
+                    link = res["result"]["bot_invoice_url"]
+                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Перейти к оплате", url=link)]])
+                    await message.answer(f"Счет на {title} создан. Нажмите для оплаты:", reply_markup=kb)
+                else:
+                    await message.answer("Ошибка создания счета.")
+    except Exception as e:
+        print(f"CryptoBot Error: {e}")
+        await message.answer("Ошибка сервера.")
 
 @dp.message(F.successful_payment)
 async def on_successful_payment(message: types.Message):
@@ -141,31 +158,6 @@ async def on_successful_payment(message: types.Message):
     elif payload == "plus_30d":
         await update_user_plan(message.from_user.id, "plus")
         await message.answer("✅ Оплата Stars прошла! Ваш статус обновлен на <b>PLUS</b>.", parse_mode="HTML")
-
-# --- ОПЛАТА КРИПТА (CryptoBot) ---
-async def create_crypto_invoice(amount_usd: float, description: str, payload: str):
-    url = "https://pay.crypt.bot/api/createInvoice"
-    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
-    data = {"asset": "USDT", "amount": str(amount_usd), "description": description, "payload": payload, "expires_in": 3600}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=headers) as resp:
-                res = await resp.json()
-                if res.get("ok"):
-                    return res["result"]["bot_invoice_url"]
-    except Exception as e:
-        print(f"CryptoBot Error: {e}")
-    return None
-
-@dp.callback_query(F.data == "pay_crypto_pro")
-async def pay_crypto_pro(callback: types.CallbackQuery):
-    link = await create_crypto_invoice(5.0, "ExTracker PRO (30 дней)", "pro_30d")
-    if link:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Перейти к оплате", url=link)]])
-        await callback.message.answer("Счет создан. Нажмите для оплаты:", reply_markup=kb)
-    else:
-        await callback.message.answer("Ошибка создания счета.")
-    await callback.answer()
 
 # --- ЗАПУСК ---
 async def on_startup(bot: Bot):
