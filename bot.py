@@ -1,6 +1,8 @@
 import asyncio
 import os
 import aiohttp
+import logging
+logging.basicConfig(level=logging.DEBUG)
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
