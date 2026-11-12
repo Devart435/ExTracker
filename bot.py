@@ -26,6 +26,7 @@ IMG_ABOUT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/b
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# --- БАЗА ДАННЫХ ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
@@ -47,6 +48,7 @@ async def check_sub(user_id: int) -> bool:
     except Exception:
         return False
 
+# --- ВЕБХУК ДЛЯ CRYPTOBOT ---
 async def crypto_webhook(request):
     try:
         data = await request.json()
@@ -68,6 +70,7 @@ async def crypto_webhook(request):
         print(f"Webhook Error: {e}")
         return web.Response(status=500)
 
+# --- МЕНЮ ---
 async def show_main_menu(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Открыть ExTracker", web_app=WebAppInfo(url=WEBAPP_URL))],
@@ -148,26 +151,41 @@ async def back_to_start(callback: types.CallbackQuery):
     await show_main_menu(callback.message)
     await callback.answer()
 
+# --- ОПЛАТА ---
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
+    if not CRYPTO_PAY_TOKEN:
+        await message.answer("❌ Ошибка: Токен CryptoBot не настроен на сервере.")
+        print("CRYPTO_PAY_TOKEN is missing!")
+        return
+
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
     payload_with_id = f"{payload}_{message.from_user.id}"
-    data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": payload_with_id, "expires_in": 3600}
+    data = {
+        "asset": "USDT", 
+        "amount": str(amount_usd), 
+        "description": title, 
+        "payload": payload_with_id, 
+        "expires_in": 3600
+    }
+    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
                 res = await resp.json()
                 if res.get("ok"):
                     link = res["result"]["bot_invoice_url"]
-                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Перейти к оплате", url=link)]])
-                    await message.answer(f"Счет на {title} создан. Нажмите для оплаты:", reply_markup=kb)
+                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💳 Перейти к оплате", url=link)]])
+                    await message.answer(f"Счет на {title} создан. Нажмите кнопку ниже:", reply_markup=kb)
                 else:
-                    await message.answer("Ошибка создания счета.")
+                    error_desc = res.get("error", {}).get("description", "Неизвестная ошибка")
+                    print(f"CryptoBot API Error: {error_desc}")
+                    await message.answer(f"❌ Ошибка создания счета: {error_desc}")
     except Exception as e:
-        print(f"CryptoBot Error: {e}")
-        await message.answer("Ошибка сервера.")
+        print(f"CryptoBot Exception: {e}")
+        await message.answer("❌ Ошибка сервера при создании счета. Проверьте логи Render.")
 
-# --- ЗАПУСК ---
+# --- ЗАПУСК (ЧИСТЫЙ ВЕБХУК) ---
 async def on_startup(bot: Bot):
     await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
 
