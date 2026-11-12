@@ -8,173 +8,211 @@ from aiohttp import web
 from datetime import datetime
 
 # --- НАСТРОЙКИ ---
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "a2ca2df25ac18a4002269b4ddd8fced26fd4f1d7b5fde89281e7c9400fe59501")
-TON_API_KEY = os.getenv("TON_API_KEY")
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY") # СДЕЛАЙ НОВЫЙ КЛЮЧ!
+TONCENTER_KEY = os.getenv("TON_API_KEY") # Ключ от @tonapibot (для toncenter)
+TONAPI_KEY = os.getenv("TONAPI_KEY") # Нужен отдельный ключ с tonconsole.com
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# Защита от лишних слешей в URL базы
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/v1", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 MIN_SWAP_USD = 5000
+session = None
 
-# --- СПИСОК КОШЕЛЬКОВ КИТОВ (для TON) ---
+SOLANA_WHALES = [
+    "EYKNBYxK7kiEJMNiytbat18X8koug7GNHGLAqEZsFrGB", 
+    "AwroU2o6sahxKS6xPG4by6zxg9hjiczHWp7CqsWmRion", 
+    "GuRfuByNZoFb2TJKj3x6SZEwaZzt8rn2MG1PAgEzWizm", 
+    "DevY6MwW43tUstcYDcs21FdzAUqrKBE2e54ETkWPUft2",
+    "FHpcNSe6tb2n15bAdq4BkeYWGyZKFD7yLYrH92ng7wCT",
+    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
+    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
+    "H8sMJSCQxfKiFTCfDR3DUMLPwcRbM61LGFJ8N4dK3WjS",
+    "FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5"
+]
+
 TON_WHALES = [
     "EQA-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
     "EQAI7sfVjEv0ywHV2SbP-9bhdDJ8-Z0k1BpxM0WleeP2PxTW"
 ]
 
 price_cache = {"TON": 0.0, "SOL": 0.0, "last_update": 0}
+seen_tx = set()
+token_cache = {}
+WRAPPED_SOL = "So11111111111111111111111111111111111111112"
 
 async def update_prices():
     global price_cache
     if time.time() - price_cache["last_update"] < 60: return
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get('https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT') as r_ton, \
-                       session.get('https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT') as r_sol:
-                data_ton = await r_ton.json()
-                data_sol = await r_sol.json()
-                price_cache["TON"] = float(data_ton['price'])
-                price_cache["SOL"] = float(data_sol['price'])
-                price_cache["last_update"] = time.time()
-                print(f"Цены: SOL=${price_cache['SOL']}, TON=${price_cache['TON']}")
+        async with session.get('https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT') as r_ton, \
+                   session.get('https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT') as r_sol:
+            data_ton = await r_ton.json()
+            data_sol = await r_sol.json()
+            price_cache["TON"] = float(data_ton['price'])
+            price_cache["SOL"] = float(data_sol['price'])
+            price_cache["last_update"] = time.time()
     except Exception as e: print(f"Ошибка цен: {e}")
 
+async def get_token_ticker(contract_address):
+    if contract_address in token_cache: return token_cache[contract_address]
+    try:
+        async with session.get(f"https://api.dexscreener.com/latest/dex/tokens/{contract_address}") as r:
+            if r.status == 200:
+                data = await r.json()
+                if data.get("pairs"):
+                    symbol = data["pairs"][0].get("baseToken", {}).get("symbol", "UNKNOWN")
+                    token_cache[contract_address] = symbol
+                    return symbol
+    except: pass
+    return "UNKNOWN"
+
 async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca=""):
-    if amount_usd < MIN_SWAP_USD: return
+    await update_prices() # Фикс 4: Обновляем цены перед каждой записью
+    
+    if amount_usd < MIN_SWAP_USD or tx_hash in seen_tx: return
+    seen_tx.add(tx_hash)
+    if len(seen_tx) > 10000: seen_tx.clear()
+    
     url = f"{SUPABASE_URL}/rest/v1/whale_transactions"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
     data = {"wallet": wallet, "action": action, "amount": round(amount_usd, 2), "token": token, "network": network, "tx_hash": tx_hash, "contract_address": ca, "created_at": datetime.now().isoformat()}
     
     try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(url, headers=headers, json=data)
-            print(f"✅ Сохранено: {wallet[:6]}... {action} {token} ${amount_usd:.2f}")
-            await send_telegram_alert(action, wallet, amount_usd, token, network)
+        await session.post(url, headers=headers, json=data)
+        print(f"✅ Сохранено: {wallet[:6]}... {action} {token} ${amount_usd:.2f}")
+        await send_telegram_alert(action, wallet, amount_usd, token, network)
     except Exception as e: print(f"Ошибка БД: {e}")
 
 async def send_telegram_alert(action, wallet, amount, token, network):
     if not BOT_TOKEN: return
     indicator = "🟢" if action == "BUY" else "🔴"
-    text = f"{indicator} <b>КИТ {action}</b>\n\nТокен: {token}\nСеть: {network}\nСумма: ${amount:,.2f}\nКошелек: <code>{wallet}</code>"
-    
+    text = f"{indicator} <b>КИТ {action}</b>\n\nТокен: ${token}\nСеть: {network}\nСумма: ${amount:,.2f}\nКошелек: <code>{wallet}</code>"
     url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                users = await resp.json()
-                for u in users:
-                    if u.get('chat_id'):
-                        await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML"})
-    except Exception as e: print(f"Ошибка пуша: {e}")
+        async with session.get(url, headers=headers) as resp:
+            users = await resp.json()
+            for u in users:
+                if u.get('chat_id'):
+                    await session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": u['chat_id'], "text": text, "parse_mode": "HTML"})
+    except: pass
 
 async def listen_to_solana():
     await update_prices()
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-    JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+    # Фикс 1: Отдельный URL для HTTP-запросов
+    rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}" 
     
     while True:
         try:
             async with websockets.connect(ws_url, ping_interval=30) as ws:
-                sub_msg = {"jsonrpc": "2.0", "id": 1, "method": "logsSubscribe", "params": [{"mentions": [JUPITER_PROGRAM]}, {"commitment": "confirmed"}]}
+                sub_msg = {"jsonrpc": "2.0", "id": 1, "method": "logsSubscribe", "params": [{"mentions": SOLANA_WHALES}, {"commitment": "confirmed"}]}
                 await ws.send(json.dumps(sub_msg))
-                print("Solana: Подключено к Helius. Ждем свапы...")
+                print(f"Solana: Следим за {len(SOLANA_WHALES)} китами...")
                 
                 async for message in ws:
                     data = json.loads(message)
                     if "params" in data and "result" in data["params"]:
                         logs = data["params"]["result"]
                         if logs.get("err"): continue
-                        
                         signature = logs.get("signature")
                         if not signature: continue
                         
-                        # Проверяем, что это реальный свап
-                        if any("swap" in log.lower() for log in logs.get("logs", [])):
-                            # Делаем запрос к Helius, чтобы узнать реальную сумму сделки
-                            async with aiohttp.ClientSession() as session:
-                                rpc_payload = {
-                                    "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
-                                    "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
-                                }
-                                async with session.post(ws_url, json=rpc_payload) as r:
-                                    tx_data = await r.json()
-                                    try:
-                                        meta = tx_data["result"]["meta"]
-                                        pre_balances = meta["preBalances"]
-                                        post_balances = meta["postBalances"]
-                                        
-                                        # Считаем разницу в SOL (перевод)
-                                        diff_lamports = abs(post_balances[0] - pre_balances[0])
-                                        sol_amount = diff_lamports / 1_000_000_000
-                                        
-                                        # Переводим в USD
-                                        usd_amount = sol_amount * price_cache["SOL"]
-                                        
-                                        if usd_amount > MIN_SWAP_USD:
-                                            # Достаем адрес того, кто сделал свап
-                                            account_keys = tx_data["result"]["transaction"]["message"]["accountKeys"]
-                                            wallet = account_keys[0]["pubkey"] if isinstance(account_keys[0], dict) else account_keys[0]
-                                            
-                                            # Определяем, покупка или продажа (упрощенно)
-                                            action = "BUY" if post_balances[0] < pre_balances[0] else "SELL"
-                                            
-                                            await save_to_db(wallet, action, usd_amount, "SOL", "Solana", signature)
-                                    except Exception as e:
-                                        pass # Если транзакция сложная, пропускаем
-                                        
+                        rpc_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTransaction", "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]}
+                        
+                        # Используем rpc_url, а не ws_url
+                        async with session.post(rpc_url, json=rpc_payload) as r:
+                            tx_data = await r.json()
+                            try:
+                                meta = tx_data["result"]["meta"]
+                                if not meta: continue
+                                pre_balances = meta["preBalances"]
+                                post_balances = meta["postBalances"]
+                                diff_lamports = abs(post_balances[0] - pre_balances[0])
+                                sol_amount = diff_lamports / 1_000_000_000
+                                usd_amount = sol_amount * price_cache["SOL"]
+                                
+                                if usd_amount > MIN_SWAP_USD:
+                                    account_keys = tx_data["result"]["transaction"]["message"]["accountKeys"]
+                                    wallet = account_keys[0]["pubkey"] if isinstance(account_keys[0], dict) else account_keys[0]
+                                    action = "BUY" if post_balances[0] < pre_balances[0] else "SELL"
+                                    
+                                    token_ticker = "SOL"
+                                    token_ca = ""
+                                    
+                                    # Фикс 2: Ищем токен именно нашего кита и игнорируем wSOL
+                                    if meta.get("postTokenBalances"):
+                                        for tb in meta["postTokenBalances"]:
+                                            if tb.get("owner") == wallet and tb.get("mint") != WRAPPED_SOL:
+                                                if tb.get("uiTokenAmount", {}).get("uiAmount", 0) > 0:
+                                                    token_ca = tb.get("mint")
+                                                    token_ticker = await get_token_ticker(token_ca)
+                                                    break
+                                    
+                                    # Фикс 3: Если токен не найден, значит это просто перевод SOL, а не покупка
+                                    if token_ca != "":
+                                        await save_to_db(wallet, action, usd_amount, token_ticker, "Solana", signature, token_ca)
+                            except: pass
         except Exception as e:
-            print(f"Solana WS ошибка: {e}. Перезапуск через 5 сек...")
-            await asyncio.sleep(5)
+            print(f"Solana WS ошибка: {e}. Перезапуск...")
+            await asyncio.sleep(10)
 
 async def listen_to_ton():
     await update_prices()
-    print("TON: Парсер запущен. Опрос кошельков...")
+    print(f"TON: Следим за {len(TON_WHALES)} китами через TONAPI...")
+    
+    # Фикс 5: Используем правильный ключ для tonapi.io
+    headers = {"Authorization": f"Bearer {TONAPI_KEY}", "Accept": "application/json"} if TONAPI_KEY else {}
     
     while True:
         for wallet in TON_WHALES:
             try:
-                async with aiohttp.ClientSession() as session:
-                    headers = {"X-API-Key": TON_API_KEY} if TON_API_KEY else {}
-                    url = f"https://toncenter.com/api/v2/getTransactions?address={wallet}&limit=5"
-                    async with session.get(url, headers=headers) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if data.get("ok") and data.get("result"):
-                                for tx in data["result"]:
-                                    if int(datetime.now().timestamp()) - int(tx.get("utime", 0)) > 300: continue
-                                    in_msg = tx.get("in_msg", {})
-                                    if isinstance(in_msg, dict) and int(in_msg.get("value", 0)) > 0:
-                                        amount = (int(in_msg["value"]) / 1_000_000_000) * price_cache["TON"]
-                                        if amount > MIN_SWAP_USD:
-                                            tx_hash = tx.get("transaction_id", {}).get("hash", "")
-                                            await save_to_db(wallet, "BUY", amount, "TON", "TON", tx_hash)
+                url = f"https://tonapi.io/v2/accounts/{wallet}/events?limit=5"
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for event in data.get("events", []):
+                            if event.get("in_progress") == False and any("JettonSwap" in action.get("type", "") for action in event.get("actions", [])):
+                                for action in event["actions"]:
+                                    if "JettonSwap" in action.get("type", ""):
+                                        ton_amount = float(action.get("JettonSwap", {}).get("amount_in", "0")) / 1e9
+                                        if ton_amount == 0:
+                                            ton_amount = float(action.get("JettonSwap", {}).get("amount_out", "0")) / 1e9
+                                            
+                                        usd_amount = ton_amount * price_cache["TON"]
+                                        if usd_amount > MIN_SWAP_USD:
+                                            tx_hash = event.get("event_id", "")
+                                            jetton_info = action.get("JettonSwap", {}).get("jetton_master_in") or action.get("JettonSwap", {}).get("jetton_master_out")
+                                            token_ticker = "TON"
+                                            if jetton_info:
+                                                token_ticker = jetton_info.get("symbol", "UNKNOWN")
+                                                token_ca = jetton_info.get("address", "")
+                                            else:
+                                                token_ca = ""
+                                            await save_to_db(wallet, "BUY", usd_amount, token_ticker, "TON", tx_hash, token_ca)
             except Exception as e:
                 print(f"TON ошибка: {e}")
         
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
 async def handle(request): return web.Response(text="ExTracker Parser is running...")
 async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"Веб-сервер запущен на порту {port}")
+    app = web.Application(); app.router.add_get('/', handle)
+    runner = web.AppRunner(app); await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 8080))); await site.start()
+    print("Веб-сервер запущен")
 
 async def main():
+    global session
+    session = aiohttp.ClientSession()
     await start_web_server()
     asyncio.create_task(update_prices())
     asyncio.create_task(listen_to_solana())
     asyncio.create_task(listen_to_ton())
-    
-    while True:
-        await asyncio.sleep(3600)
+    try:
+        while True: await asyncio.sleep(3600)
+    finally:
+        await session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
