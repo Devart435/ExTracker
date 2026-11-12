@@ -15,7 +15,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 
-# ИМЯ БОТА
 BOT_USERNAME = "ExTrackerTerminalBot"
 
 IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png"
@@ -27,7 +26,6 @@ IMG_ABOUT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/b
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- БАЗА ДАННЫХ ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
@@ -49,14 +47,12 @@ async def check_sub(user_id: int) -> bool:
     except Exception:
         return False
 
-# --- ВЕБХУК ДЛЯ CRYPTOBOT (АВТООПЛАТА) ---
 async def crypto_webhook(request):
     try:
         data = await request.json()
         if data.get("update_type") == "invoice_paid":
             invoice = data.get("payload", {})
             payload = invoice.get("payload", "")
-            
             if "_" in payload:
                 user_id_str = payload.split("_")[-1]
                 if user_id_str.isdigit():
@@ -72,7 +68,6 @@ async def crypto_webhook(request):
         print(f"Webhook Error: {e}")
         return web.Response(status=500)
 
-# --- МЕНЮ ---
 async def show_main_menu(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Открыть ExTracker", web_app=WebAppInfo(url=WEBAPP_URL))],
@@ -157,13 +152,7 @@ async def send_crypto_invoice(message: types.Message, amount_usd: float, title: 
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
     payload_with_id = f"{payload}_{message.from_user.id}"
-    data = {
-        "asset": "USDT", 
-        "amount": str(amount_usd), 
-        "description": title, 
-        "payload": payload_with_id, 
-        "expires_in": 3600
-    }
+    data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": payload_with_id, "expires_in": 3600}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
@@ -178,15 +167,17 @@ async def send_crypto_invoice(message: types.Message, amount_usd: float, title: 
         print(f"CryptoBot Error: {e}")
         await message.answer("Ошибка сервера.")
 
-# --- ЗАПУСК (ИСПРАВЛЕНО) ---
-if __name__ == "__main__":
-    # Устанавливаем вебхук ДО запуска сервера (без создания нового Event Loop внутри main)
-    asyncio.run(bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True))
-    
+# --- ЗАПУСК ---
+async def on_startup(bot: Bot):
+    await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
+
+def main():
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
     app.router.add_post("/crypto_webhook", crypto_webhook)
-    setup_application(app, dp, bot=bot)
-    
+    setup_application(app, dp, bot=bot, on_startup=on_startup)
     port = int(os.environ.get("PORT", 8080))
     web.run_app(app, host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    main()
