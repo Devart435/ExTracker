@@ -3,9 +3,9 @@ import os
 import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiogram.filters import CommandStart, CommandObject, Command
+from aiogram.filters import CommandStart, CommandObject
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://extracker-eight.vercel.app")
@@ -15,14 +15,32 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
 
+# Картинки
+IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png"
+IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
+IMG_SUPPORT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000aa2c821087ec3f3ea12422f6.png"
+IMG_PROFILE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000033e082109342702b717a9f88.png"
+IMG_ABOUT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000a090821293d0cb7b8d988b9e.png"
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# --- БАЗА ДАННЫХ ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
+    data = {"chat_id": user_id, "username": username}
     async with aiohttp.ClientSession() as session:
-        await session.post(url, headers=headers, json={"chat_id": user_id, "username": username})
+        await session.post(url, headers=headers, json=data)
+
+async def get_user_plan(user_id: int) -> str:
+    url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}&select=plan"
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as resp:
+            data = await resp.json()
+            if data and len(data) > 0: return data[0].get("plan", "free")
+    return "free"
 
 async def check_sub(user_id: int) -> bool:
     try:
@@ -35,7 +53,8 @@ async def crypto_webhook(request):
     try:
         data = await request.json()
         if data.get("update_type") == "invoice_paid":
-            payload = data.get("payload", {}).get("payload", "")
+            invoice = data.get("payload", {})
+            payload = invoice.get("payload", "")
             if "_" in payload:
                 user_id = int(payload.split("_")[-1])
                 plan = "pro" if "pro" in payload else "plus"
@@ -48,17 +67,21 @@ async def crypto_webhook(request):
     except Exception:
         return web.Response(status=500)
 
-async def show_main_menu(message: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Открыть ExTracker", web_app=WebAppInfo(url=WEBAPP_URL))],
-        [InlineKeyboardButton(text="Профиль", callback_data="profile"), InlineKeyboardButton(text="Поддержка", callback_data="support")],
-        [InlineKeyboardButton(text="Добавить кошелек", callback_data="add_wallet_help")]
-    ])
-    try:
-        await message.answer_photo(photo="https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png", caption="<b>Добро пожаловать в ExTracker!</b>\n\nНажмите кнопку ниже, чтобы открыть терминал.", reply_markup=kb, parse_mode="HTML")
-    except Exception:
-        await message.answer("Добро пожаловать в ExTracker! Нажмите кнопку ниже.", reply_markup=kb)
+# --- КЛАВИАТУРЫ ---
+def main_reply_kb():
+    kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🚀 Открыть ExTracker")],
+        [KeyboardButton(text="💬 Поддержка"), KeyboardButton(text="👤 Профиль")],
+        [KeyboardButton(text="ℹ️ О нас"), KeyboardButton(text="💎 Тарифы")]
+    ], resize_keyboard=True)
+    return kb
 
+def inline_start_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Открыть ExTracker", web_app=WebAppInfo(url=WEBAPP_URL))]
+    ])
+
+# --- ХЕНДЛЕРЫ ---
 @dp.message(CommandStart(deep_link=True))
 async def start_with_payload(message: types.Message, command: CommandObject):
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
@@ -71,71 +94,48 @@ async def start_with_payload(message: types.Message, command: CommandObject):
 async def start(message: types.Message):
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
     if not await check_sub(message.from_user.id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Перейти в канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")], [InlineKeyboardButton(text="Проверить", callback_data="check_sub")]])
-        await message.answer("Для доступа подпишитесь на канал.", reply_markup=kb)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Перейти в канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")], [InlineKeyboardButton(text="Проверить подписку", callback_data="check_sub")]])
+        await message.answer_photo(photo=IMG_SUBSCRIBE, caption="Для доступа к терминалу ExTracker, пожалуйста, подпишитесь на наш новостной канал.", reply_markup=kb, parse_mode="HTML")
         return
-    await show_main_menu(message)
+    
+    # Приветствие с Reply-клавиатурой и Inline-кнопкой
+    caption = f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\nВаш доступ к терминалу мониторинга крупных ончейн-сделок активирован."
+    await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=inline_start_kb(), parse_mode="HTML")
+    await message.answer("Используйте меню ниже для навигации:", reply_markup=main_reply_kb())
 
+@dp.message(F.text == "🚀 Открыть ExTracker")
+async def btn_open_app(message: types.Message):
+    await message.answer("Нажмите кнопку ниже, чтобы открыть приложение:", reply_markup=inline_start_kb())
+
+@dp.message(F.text == "💬 Поддержка")
+async def btn_support(message: types.Message):
+    await message.answer_photo(photo=IMG_SUPPORT, caption="<b>Служба поддержки ExTracker</b>\n\nПо вопросам обращайтесь:\n@ExTrackerSupport", parse_mode="HTML")
+
+@dp.message(F.text == "👤 Профиль")
+async def btn_profile(message: types.Message):
+    plan = await get_user_plan(message.from_user.id)
+    status = "PRO" if plan != "free" else "FREE"
+    text = f"<b>Профиль пользователя</b>\n\nID: <code>{message.from_user.id}</code>\nТариф: <b>{status}</b>\nЛимит сессии: <b>{'24/7' if status == 'PRO' else '3 часа'}</b>\nКастомные кошельки: <b>0 / {'50' if status == 'PRO' else '2'}</b>"
+    await message.answer_photo(photo=IMG_PROFILE, caption=text, parse_mode="HTML")
+
+@dp.message(F.text == "ℹ️ О нас")
+async def btn_about(message: types.Message):
+    text = "<b>О проекте ExTracker</b>\n\nExTracker — профессиональная инфраструктура для ончейн-аналитики. Мониторим 100+ кошельков.\n\n<b>Наши ресурсы:</b>\n@extracker_ru\n@extracker_community"
+    await message.answer_photo(photo=IMG_ABOUT, caption=text, parse_mode="HTML")
+
+@dp.message(F.text == "💎 Тарифы")
+async def btn_plans(message: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💸 Оплатить PRO ($9)", url="https://t.me/ExTrackerTerminalBot?start=pay_pro")]])
+    await message.answer("<b>Тарифы ExTracker</b>\n\n<b>FREE</b> — $0 (базовый доступ)\n<b>PRO</b> — $9 (безлимит, все сделки)", reply_markup=kb, parse_mode="HTML")
+
+# --- ОСТАЛЬНОЕ ---
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: types.CallbackQuery):
     if await check_sub(callback.from_user.id):
         await callback.message.delete()
-        await show_main_menu(callback.message)
+        await start(callback.message)
     else:
         await callback.answer("Вы не подписаны!", show_alert=True)
-
-# --- ДОБАВЛЕНИЕ КОШЕЛЬКОВ ---
-@dp.message(Command("add_wallet"))
-async def add_wallet(message: types.Message):
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Использование: /add_wallet <адрес>\n\nПример:\n/add_wallet EQBfbbSCrAnX2XWOjSq2qnAx...")
-        return
-    
-    wallet = args[1].strip()
-    # Определяем сеть по длине адреса
-    network = "Solana" if len(wallet) > 40 and not wallet.startswith("E") else "TON"
-    
-    url = f"{SUPABASE_URL}/rest/v1/custom_wallets"
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
-    data = {"chat_id": message.from_user.id, "wallet": wallet, "network": network}
-    
-    async with aiohttp.ClientSession() as session:
-        # Проверка лимита (на FREE - 2 кошелька)
-        user_url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{message.from_user.id}&select=plan"
-        async with session.get(user_url, headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}) as resp:
-            user_data = await resp.json()
-            plan = user_data[0].get("plan", "free") if user_data else "free"
-            
-        if plan == "free":
-            count_url = f"{SUPABASE_URL}/rest/v1/custom_wallets?chat_id=eq.{message.from_user.id}&select=wallet"
-            async with session.get(count_url, headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}) as resp:
-                existing = await resp.json()
-                if len(existing) >= 2:
-                    await message.answer("❌ На тарифе FREE можно добавить не более 2 кошельков.\n\nОформите PRO для снятия лимита.")
-                    return
-        
-        async with session.post(url, headers=headers, json=data) as resp:
-            if resp.status in [200, 201]:
-                await message.answer(f"✅ Кошелек добавлен!\nСеть: {network}\nАдрес: <code>{wallet}</code>", parse_mode="HTML")
-            else:
-                await message.answer("Ошибка при добавлении.")
-
-@dp.callback_query(F.data == "add_wallet_help")
-async def add_wallet_help(callback: types.CallbackQuery):
-    await callback.message.answer("Чтобы добавить кошелек, отправьте команду:\n\n<code>/add_wallet ВАШ_АДРЕС</code>\n\nНа FREE можно добавить до 2 кошельков, на PRO — до 50.", parse_mode="HTML")
-    await callback.answer()
-
-# --- ОСТАЛЬНЫЕ ХЕНДЛЕРЫ ---
-@dp.callback_query(F.data == "profile")
-async def profile(callback: types.CallbackQuery):
-    await callback.message.answer(f"<b>Профиль</b>\nID: <code>{callback.from_user.id}</code>", parse_mode="HTML")
-    await callback.answer()
-
-@dp.callback_query(F.data == "support")
-async def support(callback: types.CallbackQuery):
-    await callback.message.answer("Поддержка: @ExTrackerSupport")
-    await callback.answer()
 
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
     if not CRYPTO_PAY_TOKEN:
