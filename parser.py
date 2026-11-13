@@ -25,7 +25,6 @@ TON_WHALES = []
 price_cache = {"TON": 0.0, "SOL": 0.0, "last_update": 0}
 seen_tx = set()
 token_cache = {}
-WRAPPED_SOL = "So11111111111111111111111111111111111111112"
 
 async def update_prices():
     global price_cache
@@ -65,10 +64,7 @@ async def load_whales_from_db():
                 SOLANA_WHALES = list(set([w['address'] for w in data if w['network'] == 'Solana']))
                 TON_WHALES = list(set([w['address'] for w in data if w['network'] == 'TON']))
                 print(f"✅ В базе: {len(SOLANA_WHALES)} Solana китов, {len(TON_WHALES)} TON китов.")
-            else:
-                print(f"⚠️ Ошибка загрузки китов: {resp.status}")
-    except Exception as e:
-        print(f"❌ Ошибка БД при загрузке китов: {e}")
+    except Exception as e: print(f"❌ Ошибка БД: {e}")
 
 async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca=""):
     await update_prices()
@@ -103,7 +99,7 @@ async def send_telegram_alert(action, wallet, amount, token, network):
 async def listen_to_solana():
     await update_prices()
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-    rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+    enhanced_url = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
     
     while True:
         if not SOLANA_WHALES:
@@ -123,34 +119,52 @@ async def listen_to_solana():
                         signature = logs.get("signature")
                         if not signature: continue
                         
-                        rpc_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTransaction", "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]}
-                        async with session.post(rpc_url, json=rpc_payload) as r:
+                        # Запрос к Enhanced API для умного парсинга
+                        payload = {"transactions": [signature]}
+                        async with session.post(enhanced_url, json=payload) as r:
                             tx_data = await r.json()
+                            if not tx_data or not isinstance(tx_data, list): continue
+                            
                             try:
-                                meta = tx_data["result"]["meta"]
-                                if not meta: continue
-                                pre_balances = meta["preBalances"]
-                                post_balances = meta["postBalances"]
-                                diff_lamports = abs(post_balances[0] - pre_balances[0])
-                                sol_amount = diff_lamports / 1_000_000_000
-                                usd_amount = sol_amount * price_cache["SOL"]
+                                tx = tx_data[0]
+                                tx_type = tx.get("type")
+                                source = tx.get("source")
                                 
-                                if usd_amount > MIN_SWAP_USD:
-                                    account_keys = tx_data["result"]["transaction"]["message"]["accountKeys"]
-                                    wallet = account_keys[0]["pubkey"] if isinstance(account_keys[0], dict) else account_keys[0]
-                                    action = "BUY" if post_balances[0] < pre_balances[0] else "SELL"
+                                # 1. ЛОВИМ ТОЛЬКО СВАПЫ (ПОКУПКИ/ПРОДАЖИ)
+                                if tx_type not in ["SWAP", "AGGREGATOR_SWAP"]:
+                                    continue
+                                
+                                # 2. ОТСЕКАЕМ БОТОВ (JITO, SYSTEM_PROGRAM, TRANSFER)
+                                if source in ["JITO", "SYSTEM_PROGRAM"]:
+                                    continue
+                                
+                                # 3. СЧИТАЕМ СУММУ В USD
+                                account_data = tx.get("accountData", [])
+                                wallet = tx.get("feePayer")
+                                sol_diff = 0
+                                for acc in account_data:
+                                    if acc.get("account") == wallet:
+                                        sol_diff = acc.get("nativeBalanceChange", 0) / 1_000_000_000
+                                        break
+                                
+                                usd_amount = abs(sol_diff) * price_cache["SOL"]
+                                action = "BUY" if sol_diff < 0 else "SELL"
+                                
+                                if usd_amount < MIN_SWAP_USD: continue
+                                
+                                # 4. ИЩЕМ КУПЛЕННЫЙ/ПРОДАННЫЙ ТОКЕН
+                                token_ticker = "SOL"
+                                token_ca = ""
+                                token_transfers = tx.get("tokenTransfers", [])
+                                for t in token_transfers:
+                                    if t.get("mint") and t.get("mint") != "So11111111111111111111111111111111111111112":
+                                        token_ca = t.get("mint")
+                                        token_ticker = await get_token_ticker(token_ca)
+                                        break
+                                
+                                if token_ca:
+                                    await save_to_db(wallet, action, usd_amount, token_ticker, "Solana", signature, token_ca)
                                     
-                                    token_ticker = "SOL"
-                                    token_ca = ""
-                                    tb_list = meta.get("postTokenBalances", []) + meta.get("preTokenBalances", [])
-                                    for tb in tb_list:
-                                        if tb.get("owner") == wallet and tb.get("mint") != WRAPPED_SOL:
-                                            token_ca = tb.get("mint")
-                                            token_ticker = await get_token_ticker(token_ca)
-                                            break
-                                    
-                                    if token_ca != "":
-                                        await save_to_db(wallet, action, usd_amount, token_ticker, "Solana", signature, token_ca)
                             except Exception as ex: pass
         except Exception as e:
             print(f"❌ Solana WS ошибка: {e}. Перезапуск...")
@@ -185,9 +199,6 @@ async def listen_to_ton():
                                             token_ticker = jetton_info.get("symbol", "UNKNOWN") if jetton_info else "TON"
                                             token_ca = jetton_info.get("address", "") if jetton_info else ""
                                             await save_to_db(wallet, "BUY", usd_amount, token_ticker, "TON", tx_hash, token_ca)
-                    elif resp.status == 401:
-                        print("❌ TONAPI: Неверный ключ (401).")
-                        await asyncio.sleep(60)
             except Exception as e: pass
         
         await asyncio.sleep(15)
@@ -201,7 +212,7 @@ async def start_web_server():
 
 async def main():
     global session
-    print("🚀 СТАРТ ПАРСЕРА...")
+    print("🚀 СТАРТ УМНОГО ПАРСЕРА...")
     session = aiohttp.ClientSession()
     await start_web_server()
     await asyncio.sleep(2)
