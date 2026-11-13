@@ -1,81 +1,57 @@
 import asyncio
 import aiohttp
 import os
-import json
+from datetime import datetime
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/v1", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Токены для сканирования (WIF, BONK, POPCAT, SOL, JUP)
+# Токены для сканирования
 TOKENS = [
     "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", # WIF
     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", # BONK
-    "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", # POPCAT
-    "So11111111111111111111111111111111111111112",  # SOL
-    "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"   # JUP
+    "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"  # POPCAT
 ]
 
-async def fetch_top_traders(session, token_ca):
-    # Запрос к публичному API GMGN для получения топ-трейдеров по токену
-    url = f"https://gmgn.ai/api/v1/token/top_traders?chain=sol&address={token_ca}&period=7d"
+async def get_traders_from_dexscreener(session, token_ca):
+    # Получаем список пар для токена
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{token_ca}"
     try:
-        async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                traders = data.get("data", {}).get("trader_list", [])
-                smart_whales = []
-                
-                for t in traders:
-                    addr = t.get('address')
-                    pnl = t.get('profit', 0)
-                    winrate = t.get('winrate', 0)
-                    txs = t.get('total_txs', 0)
-                    
-                    # УМНЫЙ ФИЛЬТР:
-                    # 1. Отсекаем ботов (Слишком высокий винрейт и много транзакций)
-                    if winrate > 95 and txs > 5000:
-                        print(f"🤖 Отсекаем бота: {addr[:6]}... (Winrate: {winrate}%, Txs: {txs})")
-                        continue
-                    
-                    # 2. Отсекаем тех, кто в минусе (нам нужны только профитные)
-                    if pnl < 1000: 
-                        continue
-                    
-                    # 3. Отсекаем тех, у кого слишком мало транзакций (новички, случайно залетевшие)
-                    if txs < 20:
-                        continue
+        async with session.get(url) as resp:
+            if resp.status != 200: return []
+            data = await resp.json()
+            if not data.get("pairs"): return []
+            
+            # Берем самую ликвидную пару
+            pair = sorted(data["pairs"], key=lambda x: x.get("liquidity", {}).get("usd", 0) or 0, reverse=True)[0]
+            pair_addr = pair.get("pairAddress")
+            if not pair_addr: return []
 
-                    smart_whales.append(addr)
+            # Запрашиваем последние транзакции по этой паре
+            tx_url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{pair_addr}"
+            async with session.get(tx_url) as tx_resp:
+                if tx_resp.status != 200: return []
+                tx_data = await tx_resp.json()
                 
-                return smart_whales
+                # В DexScreener API нет прямого списка адресов покупателей, 
+                # поэтому мы возвращаем пустой список (этот API не подходит для скаута)
+                return []
     except Exception as e:
-        print(f"Ошибка запроса к GMGN: {e}")
-    return []
+        print(f"Ошибка DexScreener: {e}")
+        return []
 
-async def add_to_db(session, address):
-    url = f"{SUPABASE_URL}/rest/v1/tracked_whales"
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=ignore-duplicates"}
-    data = {"address": address, "network": "Solana", "name": "Smart Scout"}
-    try:
-        async with session.post(url, headers=headers, json=data) as resp:
-            if resp.status in [200, 201]:
-                return True
-    except: pass
-    return False
+# Так как DexScreener не дает список кошельков, 
+# мы используем запасной вариант: генерируем фейковый список (для теста)
+# В реальности нужен платный API (Birdeye) или парсинг через Helius.
+async def mock_scout():
+    print("⚠️ Внимание: Бесплатные API не дают список топ-трейдеров.")
+    print("⚠️ Для реального поиска китов нужен платный API Birdeye или Helius.")
+    print("✅ Скрипт завершен (без добавления китов).")
 
 async def main():
     print("🚀 УМНЫЙ РАЗВЕДЧИК ЗАПУЩЕН...")
     async with aiohttp.ClientSession() as session:
-        new_whales_count = 0
-        for token in TOKENS:
-            traders = await fetch_top_traders(session, token)
-            for addr in traders:
-                added = await add_to_db(session, addr)
-                if added: new_whales_count += 1
-            await asyncio.sleep(2)
-        
-        print(f"✅ Разведка окончена. Добавлено новых китов: {new_whales_count}")
-        print("Скрипт завершает работу.")
+        await mock_scout()
 
 if __name__ == "__main__":
     asyncio.run(main())
