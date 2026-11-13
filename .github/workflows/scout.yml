@@ -1,0 +1,22 @@
+name: Daily Smart Scout
+on:
+  schedule:
+    - cron: '0 3 * * *' # Каждый день в 3:00 UTC
+  workflow_dispatch: # Кнопка для ручного запуска
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install aiohttp
+      - name: Run Smart Scout
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scout.py
