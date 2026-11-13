@@ -142,7 +142,6 @@ async def listen_to_solana():
                                     
                                     token_ticker = "SOL"
                                     token_ca = ""
-                                    # Проверка PRE + POST для продаж в ноль
                                     tb_list = meta.get("postTokenBalances", []) + meta.get("preTokenBalances", [])
                                     for tb in tb_list:
                                         if tb.get("owner") == wallet and tb.get("mint") != WRAPPED_SOL:
