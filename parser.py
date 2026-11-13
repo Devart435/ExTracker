@@ -8,7 +8,6 @@ import aiohttp
 from aiohttp import web
 from datetime import datetime
 
-# Принудительный вывод логов
 sys.stdout.reconfigure(line_buffering=True)
 
 # --- НАСТРОЙКИ ---
@@ -21,25 +20,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 MIN_SWAP_USD = 5000
 session = None
-
-# --- 10 РЕАЛЬНЫХ КИТОВ SOLANA ---
-SOLANA_WHALES = [
-    "EYKNBYxK7kiEJMNiytbat18X8koug7GNHGLAqEZsFrGB", 
-    "AwroU2o6sahxKS6xPG4by6zxg9hjiczHWp7CqsWmRion", 
-    "GuRfuByNZoFb2TJKj3x6SZEwaZzt8rn2MG1PAgEzWizm", 
-    "DevY6MwW43tUstcYDcs21FdzAUqrKBE2e54ETkWPUft2",
-    "FHpcNSe6tb2n15bAdq4BkeYWGyZKFD7yLYrH92ng7wCT",
-    "5sTQ5ih7xtctBhMXHr3f1aWdaXazWrWfoehqWdqWnTFP", 
-    "GXbJWY8H5YwvhrRYZvSWUAcGMGjR7ygUkQNwZxefgzdm",
-    "H8sMJSCQxfKiFTCfDR3DUMLPwcRbM61LGFJ8N4dK3WjS",
-    "FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5"
-]
-
-TON_WHALES = [
-    "EQA-02X0tU5AWxXcJDwa7oWMXzSjacjaFiHBZ6VNEswMj3Vw",
-    "EQAI7sfVjEv0ywHV2SbP-9bhdDJ8-Z0k1BpxM0WleeP2PxTW"
-]
-
+SOLANA_WHALES = []
+TON_WHALES = []
 price_cache = {"TON": 0.0, "SOL": 0.0, "last_update": 0}
 seen_tx = set()
 token_cache = {}
@@ -71,7 +53,25 @@ async def get_token_ticker(contract_address):
     except: pass
     return "UNKNOWN"
 
+async def load_whales_from_db():
+    global SOLANA_WHALES, TON_WHALES
+    print("🔄 Загружаем китов из базы...")
+    url = f"{SUPABASE_URL}/rest/v1/tracked_whales?select=address,network"
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    try:
+        async with session.get(url, headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                SOLANA_WHALES = list(set([w['address'] for w in data if w['network'] == 'Solana']))
+                TON_WHALES = list(set([w['address'] for w in data if w['network'] == 'TON']))
+                print(f"✅ В базе: {len(SOLANA_WHALES)} Solana китов, {len(TON_WHALES)} TON китов.")
+            else:
+                print(f"⚠️ Ошибка загрузки китов: {resp.status}")
+    except Exception as e:
+        print(f"❌ Ошибка БД при загрузке китов: {e}")
+
 async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca=""):
+    await update_prices()
     if amount_usd < MIN_SWAP_USD or tx_hash in seen_tx: return
     seen_tx.add(tx_hash)
     if len(seen_tx) > 10000: seen_tx.clear()
@@ -101,18 +101,19 @@ async def send_telegram_alert(action, wallet, amount, token, network):
     except: pass
 
 async def listen_to_solana():
-    print("➡️ Запуск слушателя Solana...")
     await update_prices()
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     
     while True:
+        if not SOLANA_WHALES:
+            await asyncio.sleep(30); await load_whales_from_db(); continue
         try:
             print("🔌 Подключаемся к WebSocket Helius...")
             async with websockets.connect(ws_url, ping_interval=30) as ws:
                 sub_msg = {"jsonrpc": "2.0", "id": 1, "method": "logsSubscribe", "params": [{"mentions": SOLANA_WHALES}, {"commitment": "confirmed"}]}
                 await ws.send(json.dumps(sub_msg))
-                print(f"👀 Solana: Подписка успешна! Следим за {len(SOLANA_WHALES)} китами...")
+                print(f"👀 Solana: Следим за {len(SOLANA_WHALES)} китами...")
                 
                 async for message in ws:
                     data = json.loads(message)
@@ -121,8 +122,6 @@ async def listen_to_solana():
                         if logs.get("err"): continue
                         signature = logs.get("signature")
                         if not signature: continue
-                        
-                        print(f"🔔 Транзакция от кита! Hash: {signature[:10]}...")
                         
                         rpc_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTransaction", "params": [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]}
                         async with session.post(rpc_url, json=rpc_payload) as r:
@@ -143,32 +142,29 @@ async def listen_to_solana():
                                     
                                     token_ticker = "SOL"
                                     token_ca = ""
-                                    if meta.get("postTokenBalances"):
-                                        for tb in meta["postTokenBalances"]:
-                                            if tb.get("owner") == wallet and tb.get("mint") != WRAPPED_SOL:
-                                                if tb.get("uiTokenAmount", {}).get("uiAmount", 0) > 0:
-                                                    token_ca = tb.get("mint")
-                                                    token_ticker = await get_token_ticker(token_ca)
-                                                    break
+                                    # Проверка PRE + POST для продаж в ноль
+                                    tb_list = meta.get("postTokenBalances", []) + meta.get("preTokenBalances", [])
+                                    for tb in tb_list:
+                                        if tb.get("owner") == wallet and tb.get("mint") != WRAPPED_SOL:
+                                            token_ca = tb.get("mint")
+                                            token_ticker = await get_token_ticker(token_ca)
+                                            break
                                     
                                     if token_ca != "":
                                         await save_to_db(wallet, action, usd_amount, token_ticker, "Solana", signature, token_ca)
-                                    else:
-                                        print(f"ℹ️ Перевод SOL (${usd_amount:.2f}), пропускаем.")
-                            except Exception as ex: 
-                                print(f"⚠️ Ошибка парсинга: {ex}")
+                            except Exception as ex: pass
         except Exception as e:
-            print(f"❌ Solana WS ошибка: {e}. Перезапуск через 10 сек...")
+            print(f"❌ Solana WS ошибка: {e}. Перезапуск...")
             await asyncio.sleep(10)
 
 async def listen_to_ton():
-    print("➡️ Запуск слушателя TON...")
     await update_prices()
-    print(f"👀 TON: Следим за {len(TON_WHALES)} китами через TONAPI...")
-    
     headers = {"Authorization": f"Bearer {TONAPI_KEY}", "Accept": "application/json"} if TONAPI_KEY else {}
     
     while True:
+        if not TON_WHALES:
+            await asyncio.sleep(30); await load_whales_from_db(); continue
+
         for wallet in TON_WHALES:
             try:
                 url = f"https://tonapi.io/v2/accounts/{wallet}/events?limit=5"
@@ -187,18 +183,13 @@ async def listen_to_ton():
                                         if usd_amount > MIN_SWAP_USD:
                                             tx_hash = event.get("event_id", "")
                                             jetton_info = action.get("JettonSwap", {}).get("jetton_master_in") or action.get("JettonSwap", {}).get("jetton_master_out")
-                                            token_ticker = "TON"
-                                            if jetton_info:
-                                                token_ticker = jetton_info.get("symbol", "UNKNOWN")
-                                                token_ca = jetton_info.get("address", "")
-                                            else:
-                                                token_ca = ""
+                                            token_ticker = jetton_info.get("symbol", "UNKNOWN") if jetton_info else "TON"
+                                            token_ca = jetton_info.get("address", "") if jetton_info else ""
                                             await save_to_db(wallet, "BUY", usd_amount, token_ticker, "TON", tx_hash, token_ca)
                     elif resp.status == 401:
-                        print("❌ Ошибка TONAPI: Неверный ключ (401).")
+                        print("❌ TONAPI: Неверный ключ (401).")
                         await asyncio.sleep(60)
-            except Exception as e:
-                print(f"TON ошибка: {e}")
+            except Exception as e: pass
         
         await asyncio.sleep(15)
 
@@ -215,14 +206,14 @@ async def main():
     session = aiohttp.ClientSession()
     await start_web_server()
     await asyncio.sleep(2)
+    await load_whales_from_db()
     asyncio.create_task(update_prices())
     asyncio.create_task(listen_to_solana())
     asyncio.create_task(listen_to_ton())
     
-    try:
-        while True: await asyncio.sleep(3600)
-    finally:
-        await session.close()
+    while True:
+        await asyncio.sleep(3600)
+        await load_whales_from_db()
 
 if __name__ == "__main__":
     asyncio.run(main())
