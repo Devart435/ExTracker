@@ -18,7 +18,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/v1", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-MIN_SWAP_USD = 5000
+MIN_SWAP_USD = 1000
 session = None
 SOLANA_WHALES = []
 TON_WHALES = []
