@@ -23,7 +23,6 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 if not WEBHOOK_SECRET:
     print("⚠️ ВНИМАНИЕ: WEBHOOK_SECRET не задан. Вебхук не защищён!")
 
-# ТВОЯ НОВАЯ КАРТИНКА
 IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_000000009af88210a3d41715da171b4a.png"
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
 
@@ -165,7 +164,6 @@ async def start(message: types.Message):
         await message.answer_photo(photo=IMG_SUBSCRIBE, caption="Для доступа к терминалу ExTracker, пожалуйста, подпишитесь на наш новостной канал.", reply_markup=kb, parse_mode="HTML")
         return
 
-    # ТЕКСТ БЕЗ ВРАНЬЯ ПРО 100 КОШЕЛЬКОВ, 5 СТРОК ИНФЫ
     caption = (
         f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\n"
         "ExTracker – мониторинг крупных ончейн-сделок и смарт-мани в сетях TON и Solana в реальном времени.\n\n"
@@ -175,15 +173,15 @@ async def start(message: types.Message):
         "Никаких задержек, никакого шума — только важные сигналы для принятия решений."
     )
     
-    # INLINE КНОПКИ ПРЯМО ПОД СООБЩЕНИЕМ (БЕЗ ЭМОДЗИ, С ЗЕЛЕНОЙ КНОПКОЙ)
+    # ЗЕЛЕНАЯ КНОПКА С РАКЕТОЙ И НОВАЯ ССЫЛКА НА ПОЛИТИКУ
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="Запустить ExTracker", 
+            text="🚀 Запустить ExTracker", 
             web_app=WebAppInfo(url=WEBAPP_URL),
-            style="success" # Делает кнопку зеленой
+            style="success"
         )],
         [InlineKeyboardButton(text="Поддержка", url="https://t.me/ExTrackerSupport")],
-        [InlineKeyboardButton(text="Политика конфиденциальности", url="https://extracker-eight.vercel.app/privacy")]
+        [InlineKeyboardButton(text="Политика конфиденциальности", url="https://extracker-policy.vercel.app")]
     ])
     
     await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="HTML")
