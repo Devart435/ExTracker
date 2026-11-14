@@ -23,7 +23,8 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 if not WEBHOOK_SECRET:
     print("⚠️ ВНИМАНИЕ: WEBHOOK_SECRET не задан. Вебхук не защищён!")
 
-IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png"
+# ТВОЯ НОВАЯ КАРТИНКА
+IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_000000009af88210a3d41715da171b4a.png"
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
 
 bot = Bot(token=BOT_TOKEN)
@@ -164,22 +165,25 @@ async def start(message: types.Message):
         await message.answer_photo(photo=IMG_SUBSCRIBE, caption="Для доступа к терминалу ExTracker, пожалуйста, подпишитесь на наш новостной канал.", reply_markup=kb, parse_mode="HTML")
         return
 
+    # ТЕКСТ БЕЗ ВРАНЬЯ ПРО 100 КОШЕЛЬКОВ, 5 СТРОК ИНФЫ
     caption = (
         f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\n"
-        "ExTracker — это высокотехнологичный сервис для ончейн-аналитики. Мы показываем движение больших денег (Smart Money) в реальном времени.\n\n"
-        "Мониторим 100+ кошельков крипто-миллионеров и фондов в сетях TON и Solana.\n\n"
-        "<b>Нажмите «Запустить ExTracker», чтобы открыть терминал.</b>"
+        "ExTracker – мониторинг крупных ончейн-сделок и смарт-мани в сетях TON и Solana в реальном времени.\n\n"
+        "Мы анализируем транзакции крупнейших игроков рынка, чтобы вы могли видеть движение капитала раньше остальных.\n"
+        "В приложении доступны: живая лента сделок, детальные графики активности китов, статистика по токенам и удобный поиск.\n"
+        "Все данные берутся напрямую из блокчейна и обновляются каждую секунду.\n"
+        "Никаких задержек, никакого шума — только важные сигналы для принятия решений."
     )
     
-    # INLINE КНОПКИ ПРЯМО ПОД СООБЩЕНИЕМ (ЗЕЛЕНАЯ КНОПКА ЗАПУСКА)
+    # INLINE КНОПКИ ПРЯМО ПОД СООБЩЕНИЕМ (БЕЗ ЭМОДЗИ, С ЗЕЛЕНОЙ КНОПКОЙ)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="🚀 Запустить ExTracker", 
+            text="Запустить ExTracker", 
             web_app=WebAppInfo(url=WEBAPP_URL),
             style="success" # Делает кнопку зеленой
         )],
-        [InlineKeyboardButton(text="💬 Поддержка", url="https://t.me/ExTrackerSupport")],
-        [InlineKeyboardButton(text="🔒 Политика конфиденциальности", url="https://extracker-eight.vercel.app/privacy")]
+        [InlineKeyboardButton(text="Поддержка", url="https://t.me/ExTrackerSupport")],
+        [InlineKeyboardButton(text="Политика конфиденциальности", url="https://extracker-eight.vercel.app/privacy")]
     ])
     
     await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="HTML")
