@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.filters import CommandStart, CommandObject
 
@@ -25,9 +25,6 @@ if not WEBHOOK_SECRET:
 
 IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000002e882108efdb662d3c35408.png"
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
-IMG_SUPPORT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000aa2c821087ec3f3ea12422f6.png"
-IMG_PROFILE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_0000000033e082109342702b717a9f88.png"
-IMG_ABOUT = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000a090821293d0cb7b8d988b9e.png"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -43,12 +40,7 @@ async def get_http() -> aiohttp.ClientSession:
 # --- БАЗА ДАННЫХ ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
-    }
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
     data = {"chat_id": user_id, "username": username}
     session = await get_http()
     async with session.post(url, headers=headers, json=data) as resp:
@@ -69,12 +61,7 @@ async def get_user_data(user_id: int) -> dict:
 
 async def update_user_plan(user_id: int, plan: str, expires_at: str = None):
     url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}"
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=minimal",
-    }
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
     data = {"plan": plan}
     if expires_at:
         data["plan_expires_at"] = expires_at
@@ -89,7 +76,7 @@ async def check_sub(user_id: int) -> bool:
         return member.status in ["member", "administrator", "creator"]
     except Exception as e:
         print(f"⚠️ check_sub ошибка: {e}")
-        return True  # не блокируем при ошибке сети
+        return True # Не блокируем, если не смогли проверить
 
 async def verify_plan(user_id: int):
     user_data = await get_user_data(user_id)
@@ -127,18 +114,11 @@ async def crypto_webhook(request):
         payload_str = invoice_obj.get("payload", "")
         invoice_id = str(invoice_obj.get("invoice_id", ""))
         if not invoice_id:
-            print("⚠️ invoice_paid без invoice_id, пропуск")
             return web.Response(status=200)
 
         session = await get_http()
-        # Идемпотентность
-        async with session.get(
-            f"{SUPABASE_URL}/rest/v1/payments?invoice_id=eq.{invoice_id}&select=invoice_id",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-        ) as chk:
-            existing = await chk.json()
-            if existing:
-                print(f"ℹ️ invoice {invoice_id} уже обработан")
+        async with session.get(f"{SUPABASE_URL}/rest/v1/payments?invoice_id=eq.{invoice_id}&select=invoice_id", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}) as chk:
+            if await chk.json():
                 return web.Response(status=200)
 
         if "_" not in payload_str:
@@ -146,187 +126,63 @@ async def crypto_webhook(request):
         try:
             user_id = int(payload_str.split("_")[-1])
         except (ValueError, IndexError):
-            print(f"⚠️ битый payload: {payload_str}")
             return web.Response(status=200)
 
         plan = "pro" if "pro" in payload_str else "plus"
-
-        # Продление от текущей даты, не от now()
         base = datetime.now(timezone.utc)
         current = await get_user_data(user_id)
         if current.get("plan") == "pro" and current.get("plan_expires_at"):
             try:
                 cur_exp = datetime.fromisoformat(current["plan_expires_at"].replace("Z", "+00:00"))
-                if cur_exp.tzinfo is None:
-                    cur_exp = cur_exp.replace(tzinfo=timezone.utc)
-                if cur_exp > base:
-                    base = cur_exp
-            except Exception as e:
-                print(f"⚠️ ошибка парсинга текущей даты: {e}")
+                if cur_exp.tzinfo is None: cur_exp = cur_exp.replace(tzinfo=timezone.utc)
+                if cur_exp > base: base = cur_exp
+            except Exception: pass
 
         new_exp = (base + timedelta(days=30)).isoformat()
         await update_user_plan(user_id, plan, new_exp)
 
-        # Запись в payments
-        async with session.post(
-            f"{SUPABASE_URL}/rest/v1/payments",
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal",
-            },
-            json={"invoice_id": invoice_id, "user_id": user_id, "amount": invoice_obj.get("amount"), "plan": plan},
-        ) as pay_resp:
+        async with session.post(f"{SUPABASE_URL}/rest/v1/payments", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}, json={"invoice_id": invoice_id, "user_id": user_id, "amount": invoice_obj.get("amount"), "plan": plan}) as pay_resp:
             if pay_resp.status not in (200, 201, 204):
-                print(f"⚠️ payments insert HTTP {pay_resp.status}: {await pay_resp.text()}")
+                print(f"⚠️ payments insert HTTP {pay_resp.status}")
 
-        await bot.send_message(
-            user_id,
-            f"✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>{plan.upper()}</b> (до {new_exp[:10]}).",
-            parse_mode="HTML",
-        )
+        await bot.send_message(user_id, f"✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>{plan.upper()}</b> (до {new_exp[:10]}).", parse_mode="HTML")
         return web.Response(status=200)
     except Exception as e:
         print(f"Ошибка вебхука: {e}")
-        return web.Response(status=200)  # всегда 200, чтобы CryptoBot не ретраил бесконечно
-
-# --- КЛАВИАТУРЫ ---
-def main_reply_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🚀 Открыть ExTracker")],
-            [KeyboardButton(text="💬 Поддержка"), KeyboardButton(text="👤 Профиль")],
-            [KeyboardButton(text="ℹ️ О нас"), KeyboardButton(text="💎 Тарифы")],
-        ],
-        resize_keyboard=True,
-    )
-
-def inline_start_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🚀 Открыть ExTracker", web_app=WebAppInfo(url=WEBAPP_URL))]]
-    )
+        return web.Response(status=200)
 
 # --- ХЕНДЛЕРЫ ---
-@dp.message(CommandStart(deep_link=True))
-async def start_with_payload(message: types.Message, command: CommandObject):
-    await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
-    if command.args == "pay_pro":
-        await send_crypto_invoice(message, 9.0, "ExTracker PRO", "pro_30d")
-    else:
-        await start(message)
-
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
+    
     if not await check_sub(message.from_user.id):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="Перейти в канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
-                [InlineKeyboardButton(text="Проверить подписку", callback_data="check_sub")],
-            ]
-        )
-        await message.answer_photo(
-            photo=IMG_SUBSCRIBE,
-            caption="Для доступа к терминалу ExTracker, пожалуйста, подпишитесь на наш новостной канал.",
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Перейти в канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
+            [InlineKeyboardButton(text="Проверить подписку", callback_data="check_sub")]
+        ])
+        await message.answer_photo(photo=IMG_SUBSCRIBE, caption="Для доступа к терминалу ExTracker, пожалуйста, подпишитесь на наш новостной канал.", reply_markup=kb, parse_mode="HTML")
         return
+
     caption = (
         f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\n"
-        "Ваш доступ к терминалу мониторинга крупных ончейн-сделок активирован."
+        "ExTracker — это высокотехнологичный сервис для ончейн-аналитики. Мы показываем движение больших денег (Smart Money) в реальном времени.\n\n"
+        "Мониторим 100+ кошельков крипто-миллионеров и фондов в сетях TON и Solana.\n\n"
+        "<b>Нажмите «Запустить ExTracker», чтобы открыть терминал.</b>"
     )
-    await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=inline_start_kb(), parse_mode="HTML")
-    await message.answer("Используйте меню ниже для навигации:", reply_markup=main_reply_kb())
-
-@dp.message(F.text == "🚀 Открыть ExTracker")
-async def btn_open_app(message: types.Message):
-    await message.answer("Нажмите кнопку ниже, чтобы открыть приложение:", reply_markup=inline_start_kb())
-
-@dp.message(F.text == "💬 Поддержка")
-async def btn_support(message: types.Message):
-    text = "<b>Служба поддержки ExTracker</b>\n\nНаша команда на связи 24/7.\n\n📩 Пишите сюда: @ExTrackerSupport"
-    await message.answer_photo(photo=IMG_SUPPORT, caption=text, parse_mode="HTML")
-
-@dp.message(F.text == "👤 Профиль")
-async def btn_profile(message: types.Message):
-    plan = await verify_plan(message.from_user.id)
-    if plan == "expired":
-        text = (
-            "<b>Профиль пользователя</b>\n\n⚠️ <b>Подписка истекла.</b>\n"
-            "Ваш PRO тариф приостановлен. Продлите его в боте."
-        )
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="Оплатить PRO ($9)", callback_data="pay_pro")]]
-        )
-        await message.answer_photo(photo=IMG_PROFILE, caption=text, reply_markup=kb, parse_mode="HTML")
-        return
-    status = "PRO" if plan != "free" else "FREE"
-    text = f"<b>Профиль пользователя</b>\n\nID: <code>{message.from_user.id}</code>\nТариф: <b>{status}</b>"
-    await message.answer_photo(photo=IMG_PROFILE, caption=text, parse_mode="HTML")
-
-@dp.message(F.text == "ℹ️ О нас")
-async def btn_about(message: types.Message):
-    text = "<b>О проекте ExTracker</b>\n\nExTracker — профессиональная инфраструктура для ончейн-аналитики."
-    await message.answer_photo(photo=IMG_ABOUT, caption=text, parse_mode="HTML")
-
-@dp.message(F.text == "💎 Тарифы")
-async def btn_plans(message: types.Message):
-    plan = await verify_plan(message.from_user.id)
-    current = {"free": "FREE", "pro": "PRO", "expired": "истёк"}.get(plan, "FREE")
-    if plan == "pro":
-        kb = InlineKeyboardMarkup(inline_keyboard=[])
-        text = (
-            "<b>Тарифные планы ExTracker</b>\n\n"
-            "Ваш текущий план: <b>PRO</b> ✅\n\n"
-            "<b>PRO ($9/мес)</b> — продлить можно в «Профиль»."
-        )
-    else:
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="💸 Оплатить PRO ($9)", callback_data="pay_pro")]]
-        )
-        text = (
-            "<b>Тарифные планы ExTracker</b>\n\n"
-            f"Ваш текущий план: <b>{current}</b>\n\n"
-            "<b>FREE ($0)</b> — базовый доступ\n"
-            "<b>PRO ($9/мес)</b> — мгновенные уведомления, открытые адреса, безлимит"
-        )
-    await message.answer(text, reply_markup=kb, parse_mode="HTML")
-
-# --- ОПЛАТА ---
-@dp.callback_query(F.data == "pay_pro")
-async def callback_pay_pro(callback: types.CallbackQuery):
-    await send_crypto_invoice(callback.message, 9.0, "ExTracker PRO", "pro_30d")
-    await callback.answer()
-
-async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
-    if not CRYPTO_PAY_TOKEN:
-        await message.answer("Ошибка: токен не настроен.")
-        return
-    url = "https://pay.crypt.bot/api/createInvoice"
-    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
-    data = {
-        "asset": "USDT",
-        "amount": str(amount_usd),
-        "description": title,
-        "payload": f"{payload}_{message.chat.id}",
-        "expires_in": 3600,
-    }
-    try:
-        session = await get_http()
-        async with session.post(url, json=data, headers=headers) as resp:
-            res = await resp.json()
-            if res.get("ok"):
-                kb = InlineKeyboardMarkup(
-                    inline_keyboard=[[InlineKeyboardButton(text="💳 Оплатить", url=res["result"]["bot_invoice_url"])]]
-                )
-                await message.answer(f"Счет на {title} создан:", reply_markup=kb)
-            else:
-                await message.answer("Ошибка создания счета.")
-    except Exception as e:
-        print(f"⚠️ send_crypto_invoice: {e}")
-        await message.answer("Ошибка сервера.")
+    
+    # INLINE КНОПКИ ПРЯМО ПОД СООБЩЕНИЕМ (ЗЕЛЕНАЯ КНОПКА ЗАПУСКА)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🚀 Запустить ExTracker", 
+            web_app=WebAppInfo(url=WEBAPP_URL),
+            style="success" # Делает кнопку зеленой
+        )],
+        [InlineKeyboardButton(text="💬 Поддержка", url="https://t.me/ExTrackerSupport")],
+        [InlineKeyboardButton(text="🔒 Политика конфиденциальности", url="https://extracker-eight.vercel.app/privacy")]
+    ])
+    
+    await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: types.CallbackQuery):
@@ -351,7 +207,6 @@ async def on_shutdown(bot: Bot):
     global _http_session
     if _http_session and not _http_session.closed:
         await _http_session.close()
-        print("✅ HTTP-сессия закрыта")
 
 def main():
     app = web.Application()
