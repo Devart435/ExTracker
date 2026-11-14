@@ -22,14 +22,11 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 IMG_START = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_000000009af88210a3d41715da171b4a.png"
 IMG_SUBSCRIBE = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_00000000fb8482108889f22a32b53712.png"
-
-# Ссылки на документы
 URL_TERMS = "https://extracker-policy.vercel.app/terms.html"
 URL_PRIVACY = "https://extracker-policy.vercel.app/privacy.html"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
 _http_session: aiohttp.ClientSession | None = None
 
 async def get_http() -> aiohttp.ClientSession:
@@ -38,7 +35,7 @@ async def get_http() -> aiohttp.ClientSession:
         _http_session = aiohttp.ClientSession()
     return _http_session
 
-# --- БАЗА ДАННЫХ --- (функции без изменений)
+# --- БАЗА ДАННЫХ ---
 async def save_user_to_db(user_id: int, username: str):
     url = f"{SUPABASE_URL}/rest/v1/users"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
@@ -70,7 +67,7 @@ async def check_sub(user_id: int) -> bool:
         return member.status in ["member", "administrator", "creator"]
     except Exception: return True
 
-# --- ВЕБХУК КРИПТОБОТА ---
+# --- ВЕБХУК ОПЛАТЫ ---
 async def crypto_webhook(request):
     try:
         body = await request.text()
@@ -78,7 +75,6 @@ async def crypto_webhook(request):
         secret = hashlib.sha256(CRYPTO_PAY_TOKEN.encode()).digest()
         if not hmac.compare_digest(hmac.new(secret, body.encode(), hashlib.sha256).hexdigest(), signature):
             return web.Response(status=403)
-
         data = json.loads(body)
         if data.get("update_type") != "invoice_paid": return web.Response(status=200)
         
@@ -92,25 +88,20 @@ async def crypto_webhook(request):
 
         user_id = int(payload_str.split("_")[-1])
         plan = "pro"
-        
         base = datetime.now(timezone.utc)
         current = await get_user_data(user_id)
         if current.get("plan") == "pro" and current.get("plan_expires_at"):
             cur_exp = datetime.fromisoformat(current["plan_expires_at"].replace("Z", "+00:00"))
             if cur_exp > base: base = cur_exp
-
         new_exp = (base + timedelta(days=30)).isoformat()
         await update_user_plan(user_id, plan, new_exp)
-
         await session.post(f"{SUPABASE_URL}/rest/v1/payments", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}, json={"invoice_id": invoice_id, "user_id": user_id, "amount": invoice_obj.get("amount"), "plan": plan})
         await bot.send_message(user_id, f"✅ <b>Оплата прошла!</b> PRO активен до {new_exp[:10]}.", parse_mode="HTML")
         return web.Response(status=200)
     except Exception as e:
         print(f"Webhook err: {e}"); return web.Response(status=200)
 
-# --- ОПЛАТА ---
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
-    if not CRYPTO_PAY_TOKEN: return
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
     data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": f"{payload}_{message.chat.id}", "expires_in": 3600}
@@ -124,6 +115,19 @@ async def send_crypto_invoice(message: types.Message, amount_usd: float, title: 
     except Exception: pass
 
 # --- ХЕНДЛЕРЫ ---
+@dp.message(CommandStart(deep_link=True))
+async def start_deep_link(message: types.Message, command: CommandObject):
+    await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
+    if command.args == "pay_pro":
+        # Если перешел по ссылке оплаты — сразу требуем согласие
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я принимаю Оферту", callback_data="agree_terms")],
+            [InlineKeyboardButton(text="📄 Оферта", url=URL_TERMS), InlineKeyboardButton(text="📄 Политика", url=URL_PRIVACY)]
+        ])
+        await message.answer("Перед оплатой подписки PRO ($9/мес) вы должны ознакомиться и согласиться с условиями:", reply_markup=kb)
+    else:
+        await start(message)
+
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
@@ -132,10 +136,18 @@ async def start(message: types.Message):
             [InlineKeyboardButton(text="Перейти в канал", url=f"https://t.me/{CHANNEL_ID.replace('@', '')}")],
             [InlineKeyboardButton(text="Проверить подписку", callback_data="check_sub")]
         ])
-        await message.answer_photo(photo=IMG_SUBSCRIBE, caption="Подпишитесь на канал.", reply_markup=kb)
+        await message.answer_photo(photo=IMG_SUBSCRIBE, caption="Для доступа к терминалу ExTracker, пожалуйста, подпишитесь на наш новостной канал.", reply_markup=kb, parse_mode="HTML")
         return
 
-    caption = f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\nExTracker – мониторинг крупных ончейн-сделок в сетях TON и Solana в реальном времени."
+    # ВОЗВРАЩАЕМ БОЛЬШОЙ ТЕКСТ
+    caption = (
+        f"<b>Добро пожаловать в ExTracker, {message.from_user.first_name}.</b>\n\n"
+        "ExTracker – мониторинг крупных ончейн-сделок и смарт-мани в сетях TON и Solana в реальном времени.\n\n"
+        "Мы анализируем транзакции крупнейших игроков рынка, чтобы вы могли видеть движение капитала раньше остальных.\n"
+        "В приложении доступны: живая лента сделок, детальные графики активности китов, статистика по токенам и удобный поиск.\n"
+        "Все данные берутся напрямую из блокчейна и обновляются каждую секунду.\n"
+        "Никаких задержек, никакого шума — только важные сигналы для принятия решений."
+    )
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Запустить ExTracker", web_app=WebAppInfo(url=WEBAPP_URL), style="success")],
@@ -144,23 +156,11 @@ async def start(message: types.Message):
     ])
     await message.answer_photo(photo=IMG_START, caption=caption, reply_markup=kb, parse_mode="HTML")
 
-# Команда /pay (или кнопка в боте)
-@dp.message(F.text == "/pay")
-async def pay_command(message: types.Message):
-    # Сначала требуем согласие
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Я принимаю Оферту", callback_data="agree_terms")],
-        [InlineKeyboardButton(text="📄 Оферта", url=URL_TERMS), InlineKeyboardButton(text="📄 Политика", url=URL_PRIVACY)]
-    ])
-    await message.answer("Перед оплатой подписки PRO ($9/мес) вы должны ознакомиться и согласиться с условиями:", reply_markup=kb)
-
-# Обработка согласия
 @dp.callback_query(F.data == "agree_terms")
 async def agree_terms_callback(callback: types.CallbackQuery):
     await callback.message.delete()
-    # Создаем счет, так как юзер согласился
     await send_crypto_invoice(callback.message, 9.0, "ExTracker PRO", "pro_30d")
-    await callback.answer("Согласие принято. Счет создан ниже.")
+    await callback.answer("Согласие принято.")
 
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: types.CallbackQuery):
