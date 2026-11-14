@@ -19,7 +19,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/v1", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Порог сделки (временно $1000 для тестов)
+# ВАЖНО: временно $1k для отладки. Перед публичным запуском — поднять до 5000.
 MIN_SWAP_USD = int(os.getenv("MIN_SWAP_USD", "1000"))
 
 session = None
@@ -110,12 +110,7 @@ async def load_whales_from_db():
 
 async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca=""):
     await update_prices()
-    
-    # ДЕБАГ: видим, что пришло на вход
-    log(f"🔍 save_to_db: {network} {wallet[:6]}… {action} ${amount_usd:.2f} {token}")
-
     if amount_usd < MIN_SWAP_USD:
-        log(f"🔍 отсев по сумме: ${amount_usd:.2f} < ${MIN_SWAP_USD}")
         return
     if is_seen(tx_hash):
         return
@@ -142,7 +137,7 @@ async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca="")
     try:
         async with session.post(url, headers=headers, json=data) as resp:
             if resp.status in (200, 201, 204):
-                log(f"✅ СОХРАНЕНО: {network} {wallet[:6]}… {action} {token} ${amount_usd:.2f}")
+                log(f"✅ {network} {wallet[:6]}… {action} {token} ${amount_usd:.2f}")
                 if network == "Solana":
                     metrics["solana_saved"] += 1
                 else:
@@ -164,9 +159,12 @@ async def send_telegram_alert(action, wallet, amount, token, network):
     text = (
         f"{indicator} <b>КИТ {action}</b>\n\n"
         f"Токен: ${token}\nСеть: {network}\n"
-        f"Сумма: ${amount:,.2f}\nКошелек: <code>{wallet}</code>"
+        f"Сумма: ${amount:,.2f}\nКошелек: <code>{wallet[:6]}...{wallet[-4:]}</code>"
     )
-    base_url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
+    base_url = (
+        f"{SUPABASE_URL}/rest/v1/users"
+        f"?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
+    )
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 
     all_users = []
@@ -311,70 +309,48 @@ async def listen_to_ton():
                         data = await resp.json()
                         for event in data.get("events", []):
                             metrics["ton_events"] += 1
-                            
                             if event.get("in_progress") is not False:
-                                log(f"🔍 TON event in_progress: {event.get('event_id','')[:12]}")
                                 continue
-                                
                             actions = event.get("actions", [])
-                            if not actions:
-                                log(f"🔍 TON event без actions: {event.get('event_id','')[:12]}")
-                                continue
-                                
                             for action in actions:
                                 if "JettonSwap" not in action.get("type", ""):
-                                    # ДЕБАГ: если это не свап, пишем тип
-                                    log(f"🔍 TON action не Swap: {action.get('type')}")
                                     continue
 
                                 swap = action.get("JettonSwap", {})
-                                
-                                # --- НОВАЯ ЛОГИКА BUY/SELL ---
-                                # Если jetton_master_in ЕСТЬ — значит кит отдал токен, получил TON = SELL
-                                # Если jetton_master_out ЕСТЬ — значит кит отдал TON, получил токен = BUY
-                                jetton_in = swap.get("jetton_master_in")
-                                jetton_out = swap.get("jetton_master_out")
-                                
-                                # Сумма в TON (наноTON)
-                                ton_amount = 0.0
-                                if swap.get("amount_in") and not jetton_in:
-                                    # amount_in в TON (если на входе был TON)
-                                    ton_amount = float(swap.get("amount_in", "0")) / 1e9
-                                elif swap.get("amount_out") and not jetton_out:
-                                    # amount_out в TON (если на выходе был TON)
-                                    ton_amount = float(swap.get("amount_out", "0")) / 1e9
-                                
-                                # Если не смогли определить TON-объем, берем что есть
-                                if ton_amount == 0:
-                                    try:
-                                        ton_amount = float(swap.get("amount_in", "0") or 0) / 1e9
-                                        if ton_amount == 0:
-                                            ton_amount = float(swap.get("amount_out", "0") or 0) / 1e9
-                                    except (ValueError, TypeError):
-                                        pass
+                                ton_in = 0
+                                ton_out = 0
+                                try:
+                                    if swap.get("ton_in"):
+                                        ton_in = float(swap["ton_in"])
+                                    if swap.get("ton_out"):
+                                        ton_out = float(swap["ton_out"])
+                                except (ValueError, TypeError):
+                                    pass
 
+                                if ton_in > 0:
+                                    action_type = "BUY"
+                                elif ton_out > 0:
+                                    action_type = "SELL"
+                                else:
+                                    log(f"⚠️ TON: не определили сторону для {event.get('event_id', '')[:12]}")
+                                    continue
+
+                                if ton_in > 0:
+                                    ton_amount = ton_in / 1e9
+                                else:
+                                    ton_amount = ton_out / 1e9
                                 usd_amount = ton_amount * price_cache["TON"]
 
                                 if usd_amount < MIN_SWAP_USD:
-                                    log(f"🔍 TON отсев по сумме: ${usd_amount:.2f} < ${MIN_SWAP_USD} (event {event.get('event_id','')[:12]})")
-                                    continue
-
-                                if jetton_in:
-                                    action_type = "SELL"
-                                    token_info = jetton_in
-                                elif jetton_out:
-                                    action_type = "BUY"
-                                    token_info = jetton_out
-                                else:
-                                    log(f"⚠️ TON: не определили сторону для {event.get('event_id', '')[:12]}")
                                     continue
 
                                 tx_hash = event.get("event_id", "")
                                 if not tx_hash or is_seen(tx_hash):
                                     continue
 
-                                token_ticker = token_info.get("symbol", "UNKNOWN") if token_info else "TON"
-                                token_ca = token_info.get("address", "") if token_info else ""
+                                jetton_info = swap.get("jetton_master_in") or swap.get("jetton_master_out")
+                                token_ticker = jetton_info.get("symbol", "UNKNOWN") if jetton_info else "TON"
+                                token_ca = jetton_info.get("address", "") if jetton_info else ""
 
                                 await save_to_db(wallet, action_type, usd_amount, token_ticker, "TON", tx_hash, token_ca)
                 except Exception as e:
@@ -382,6 +358,51 @@ async def listen_to_ton():
                     log(f"⚠️ TON {wallet[:6]}: {e}")
             await asyncio.sleep(1.5)
         await asyncio.sleep(15)
+
+# --- HELIUS WEBHOOK ---
+async def handle_helius_webhook(request):
+    try:
+        data = await request.json()
+        if not isinstance(data, list):
+            return web.Response(status=200)
+        
+        for tx in data:
+            tx_type = tx.get("type")
+            if tx_type not in ["SWAP", "AGGREGATOR_SWAP"]:
+                continue
+            
+            fee_payer = tx.get("feePayer")
+            if fee_payer not in SOLANA_WHALES:
+                continue
+            
+            account_data = tx.get("accountData", [])
+            sol_diff = 0
+            for acc in account_data:
+                if acc.get("account") == fee_payer:
+                    sol_diff = acc.get("nativeBalanceChange", 0) / 1_000_000_000
+                    break
+            
+            usd_amount = abs(sol_diff) * price_cache["SOL"]
+            action = "BUY" if sol_diff < 0 else "SELL"
+            
+            if usd_amount < MIN_SWAP_USD:
+                continue
+            
+            token_ticker = "SOL"
+            token_ca = ""
+            for t in tx.get("tokenTransfers", []):
+                if t.get("mint") and t.get("mint") != "So11111111111111111111111111111111111111112":
+                    token_ca = t.get("mint")
+                    token_ticker = await get_token_ticker(token_ca)
+                    break
+            
+            if token_ca:
+                await save_to_db(fee_payer, action, usd_amount, token_ticker, "Solana", tx.get("signature"), token_ca)
+        
+        return web.Response(status=200)
+    except Exception as e:
+        log(f"❌ Helius Webhook error: {e}")
+        return web.Response(status=200)
 
 async def handle_health(request):
     return web.json_response(
@@ -409,11 +430,12 @@ async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle_root)
     app.router.add_get("/health", handle_health)
+    app.router.add_post("/helius_webhook", handle_helius_webhook)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
     await site.start()
-    log("✅ Веб-сервер запущен (/ и /health)")
+    log("✅ Веб-сервер запущен (/, /health, /helius_webhook)")
 
 async def main():
     global session
