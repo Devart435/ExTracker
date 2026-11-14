@@ -1,6 +1,10 @@
 import asyncio
 import os
 import aiohttp
+import hashlib
+import hmac
+import json
+from datetime import datetime, timedelta
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -10,7 +14,7 @@ from aiogram.filters import CommandStart, CommandObject
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://extracker-eight.vercel.app")
 RENDER_URL = os.getenv("RENDER_URL")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/v1", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN")
@@ -33,20 +37,24 @@ async def save_user_to_db(user_id: int, username: str):
     async with aiohttp.ClientSession() as session:
         await session.post(url, headers=headers, json=data)
 
-async def get_user_plan(user_id: int) -> str:
-    url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}&select=plan"
+async def get_user_data(user_id: int) -> dict:
+    url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}&select=plan,plan_expires_at"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             data = await resp.json()
-            if data and len(data) > 0: return data[0].get("plan", "free")
-    return "free"
+            if data and len(data) > 0:
+                return data[0]
+    return {"plan": "free", "plan_expires_at": None}
 
-async def update_user_plan(user_id: int, plan: str):
+async def update_user_plan(user_id: int, plan: str, expires_at: str = None):
     url = f"{SUPABASE_URL}/rest/v1/users?chat_id=eq.{user_id}"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "return=minimal"}
+    data = {"plan": plan}
+    if expires_at:
+        data["plan_expires_at"] = expires_at
     async with aiohttp.ClientSession() as session:
-        await session.patch(url, headers=headers, json={"plan": plan})
+        await session.patch(url, headers=headers, json=data)
 
 async def check_sub(user_id: int) -> bool:
     try:
@@ -55,19 +63,54 @@ async def check_sub(user_id: int) -> bool:
     except Exception:
         return False
 
-# --- ВЕБХУК КРИПТОБОТА ---
+# --- ПРОВЕРКА ПОДПИСКИ (СРОК ГОДНОСТИ) ---
+async def verify_plan(user_id: int):
+    user_data = await get_user_data(user_id)
+    plan = user_data.get("plan", "free")
+    expires_at = user_data.get("plan_expires_at")
+
+    if plan == "pro" and expires_at:
+        try:
+            # Парсим дату из базы
+            exp_date = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            if datetime.now(exp_date.tzinfo) > exp_date:
+                # Срок истек - сбрасываем на free
+                await update_user_plan(user_id, "free", None)
+                return "expired"
+        except Exception as e:
+            print(f"Ошибка парсинга даты: {e}")
+            return "free"
+    return plan
+
+# --- ВЕБХУК КРИПТОБОТА (С ПРОВЕРКОЙ ПОДПИСИ) ---
 async def crypto_webhook(request):
     try:
-        data = await request.json()
+        body = await request.text()
+        signature = request.headers.get("crypto-pay-api-signature", "")
+        
+        # Проверка HMAC
+        secret = hashlib.sha256(CRYPTO_PAY_TOKEN.encode()).digest()
+        check_hash = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
+        
+        if not hmac.compare_digest(check_hash, signature):
+            print("❌ Ошибка подписи вебхука!")
+            return web.Response(status=403)
+
+        data = json.loads(body)
         if data.get("update_type") == "invoice_paid":
             payload = data.get("payload", {}).get("payload", "")
             if "_" in payload:
                 user_id = int(payload.split("_")[-1])
                 plan = "pro" if "pro" in payload else "plus"
-                await update_user_plan(user_id, plan)
-                await bot.send_message(user_id, f"✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>{plan.upper()}</b>.", parse_mode="HTML")
+                
+                # Ставим PRO на 30 дней
+                expires_at = (datetime.now() + timedelta(days=30)).isoformat()
+                await update_user_plan(user_id, plan, expires_at)
+                
+                await bot.send_message(user_id, f"✅ <b>Оплата прошла!</b>\nВаш статус обновлен на <b>{plan.upper()}</b> (до {expires_at[:10]}).", parse_mode="HTML")
         return web.Response(status=200)
-    except Exception:
+    except Exception as e:
+        print(f"Ошибка вебхука: {e}")
         return web.Response(status=500)
 
 # --- КЛАВИАТУРЫ ---
@@ -90,8 +133,6 @@ async def start_with_payload(message: types.Message, command: CommandObject):
     await save_user_to_db(message.from_user.id, message.from_user.username or "unknown")
     if command.args == "pay_pro":
         await send_crypto_invoice(message, 9.0, "ExTracker PRO", "pro_30d")
-    elif command.args == "pay_plus":
-        await send_crypto_invoice(message, 20.0, "ExTracker Plus", "plus_30d")
     else:
         await start(message)
 
@@ -113,77 +154,43 @@ async def btn_open_app(message: types.Message):
 @dp.message(F.text == "💬 Поддержка")
 async def btn_support(message: types.Message):
     text = ("<b>Служба поддержки ExTracker</b>\n\n"
-            "Наша команда на связи 24/7. Мы поможем с оплатой, настройкой бота или решением любых технических проблем.\n\n"
-            "📩 Пишите сюда: @ExTrackerSupport\n\n"
-            "Среднее время ответа — 15-30 минут. Если вы обнаружили баг, приложите скриншот и опишите проблему.")
+            "Наша команда на связи 24/7.\n\n"
+            "📩 Пишите сюда: @ExTrackerSupport")
     await message.answer_photo(photo=IMG_SUPPORT, caption=text, parse_mode="HTML")
 
 @dp.message(F.text == "👤 Профиль")
 async def btn_profile(message: types.Message):
-    plan = await get_user_plan(message.from_user.id)
+    plan = await verify_plan(message.from_user.id)
+    
+    if plan == "expired":
+        text = "<b>Профиль пользователя</b>\n\n⚠️ <b>Подписка истекла.</b>\nВаш PRO тариф приостановлен. Продлите его в боте, чтобы вернуть доступ к мгновенным уведомлениям и открытым адресам китов."
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Оплатить PRO ($9)", callback_data="pay_pro")]])
+        await message.answer_photo(photo=IMG_PROFILE, caption=text, reply_markup=kb, parse_mode="HTML")
+        return
+
     status = "PRO" if plan != "free" else "FREE"
-    text = f"<b>Профиль пользователя</b>\n\nID: <code>{message.from_user.id}</code>\nТариф: <b>{status}</b>\nЛимит сессии: <b>{'24/7' if status == 'PRO' else '3 часа'}</b>\nКастомные кошельки: <b>0 / {'50' if status == 'PRO' else '2'}</b>"
+    text = f"<b>Профиль пользователя</b>\n\nID: <code>{message.from_user.id}</code>\nТариф: <b>{status}</b>\nЛимит сессии: <b>{'24/7' if status == 'PRO' else '3 часа'}</b>"
     await message.answer_photo(photo=IMG_PROFILE, caption=text, parse_mode="HTML")
 
 @dp.message(F.text == "ℹ️ О нас")
 async def btn_about(message: types.Message):
     text = ("<b>О проекте ExTracker</b>\n\n"
-            "ExTracker — это профессиональный Telegram-терминал для ончейн-аналитики. Мы даем обычному трейдеру те же возможности, что и крупным фондам.\n\n"
-            "<b>Что мы делаем:</b>\n"
-            "• Мониторим 100+ кошельков крипто-миллионеров и фондов (Wintermute, Jump Trading и др.)\n"
-            "• Сканируем блокчейны Solana и TON в реальном времени 24/7\n"
-            "• Показываем крупные сделки (от $5,000) и тренды китов\n\n"
-            "<b>Наши ресурсы:</b>\n"
-            "@extracker_ru — новости и анонсы\n"
-            "@extracker_community — чат трейдеров\n\n"
-            "Мы не просим доступ к вашим кошелькам. Только публичные данные блокчейна.")
+            "ExTracker — профессиональная инфраструктура для ончейн-аналитики.")
     await message.answer_photo(photo=IMG_ABOUT, caption=text, parse_mode="HTML")
 
 @dp.message(F.text == "💎 Тарифы")
 async def btn_plans(message: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💸 Оплатить PRO ($9)", url="https://t.me/ExTrackerTerminalBot?start=pay_pro")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💸 Оплатить PRO ($9)", callback_data="pay_pro")]])
     text = ("<b>Тарифные планы ExTracker</b>\n\n"
-            "<b>FREE ($0)</b> — для знакомства\n"
-            "• Базовый терминал и лента\n"
-            "• Задержка уведомлений 5-10 мин\n"
-            "• До 2 кастомных кошельков\n"
-            "• Частично скрытые адреса\n\n"
-            "<b>PRO ($9/мес)</b> — для активного трейдинга\n"
-            "• Мгновенные уведомления без задержек\n"
-            "• Безлимитное сканирование 24/7\n"
-            "• Полные открытые адреса китов\n"
-            "• До 50 кастомных кошельков\n"
-            "• Статистика винрейта и PnL (в разработке)")
+            "<b>FREE ($0)</b> — базовый доступ\n"
+            "<b>PRO ($9/мес)</b> — мгновенные уведомления, открытые адреса, безлимит")
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# --- КАСТОМНЫЕ КОШЕЛЬКИ ---
-@dp.message(F.text.startswith("/add_wallet"))
-async def add_wallet(message: types.Message):
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Использование: /add_wallet <адрес>\n\nПример:\n/add_wallet EQBfbbSCrAnX2XWOjSq2qnAx...")
-        return
-    wallet = args[1].strip()
-    network = "Solana" if len(wallet) > 40 and not wallet.startswith("E") else "TON"
-    
-    url = f"{SUPABASE_URL}/rest/v1/custom_wallets"
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
-    data = {"chat_id": message.from_user.id, "wallet": wallet, "network": network}
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=data) as resp:
-            if resp.status in [200, 201]:
-                await message.answer(f"✅ Кошелек добавлен!\nСеть: {network}\nАдрес: <code>{wallet}</code>", parse_mode="HTML")
-            else:
-                await message.answer("Ошибка при добавлении.")
-
-@dp.callback_query(F.data == "check_sub")
-async def check_sub_callback(callback: types.CallbackQuery):
-    if await check_sub(callback.from_user.id):
-        await callback.message.delete()
-        await start(callback.message)
-    else:
-        await callback.answer("Вы не подписаны!", show_alert=True)
+# --- ОПЛАТА ---
+@dp.callback_query(F.data == "pay_pro")
+async def callback_pay_pro(callback: types.CallbackQuery):
+    await send_crypto_invoice(callback.message, 9.0, "ExTracker PRO", "pro_30d")
+    await callback.answer()
 
 async def send_crypto_invoice(message: types.Message, amount_usd: float, title: str, payload: str):
     if not CRYPTO_PAY_TOKEN:
@@ -191,7 +198,7 @@ async def send_crypto_invoice(message: types.Message, amount_usd: float, title: 
         return
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
-    data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": f"{payload}_{message.from_user.id}", "expires_in": 3600}
+    data = {"asset": "USDT", "amount": str(amount_usd), "description": title, "payload": f"{payload}_{message.chat.id}", "expires_in": 3600}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
@@ -203,6 +210,14 @@ async def send_crypto_invoice(message: types.Message, amount_usd: float, title: 
                     await message.answer("Ошибка создания счета.")
     except Exception:
         await message.answer("Ошибка сервера.")
+
+@dp.callback_query(F.data == "check_sub")
+async def check_sub_callback(callback: types.CallbackQuery):
+    if await check_sub(callback.from_user.id):
+        await callback.message.delete()
+        await start(callback.message)
+    else:
+        await callback.answer("Вы не подписаны!", show_alert=True)
 
 async def on_startup(bot: Bot):
     await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
