@@ -19,7 +19,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/v1", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# ВАЖНО: временно $1k для отладки. Перед публичным запуском — поднять до 5000.
+# Порог сделки (временно $1000 для тестов)
 MIN_SWAP_USD = int(os.getenv("MIN_SWAP_USD", "1000"))
 
 session = None
@@ -27,13 +27,10 @@ SOLANA_WHALES = []
 TON_WHALES = []
 price_cache = {"TON": 0.0, "SOL": 0.0, "last_update": 0}
 
-# Дедуп: LRU на 10000, НЕ очищается полностью
 seen_tx = deque(maxlen=10000)
 seen_tx_set = set()
+token_cache = {}
 
-token_cache = {}  # {ca: {"symbol": ..., "ts": ...}}
-
-# Health-метрики (видны в /health)
 metrics = {
     "solana_events": 0,
     "solana_saved": 0,
@@ -43,14 +40,11 @@ metrics = {
     "started_at": datetime.now(timezone.utc).isoformat(),
 }
 
-
 def log(msg):
-    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}")
-
+    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def is_seen(tx_hash: str) -> bool:
     return tx_hash in seen_tx_set
-
 
 def mark_seen(tx_hash: str):
     if tx_hash in seen_tx_set:
@@ -61,17 +55,13 @@ def mark_seen(tx_hash: str):
     seen_tx.append(tx_hash)
     seen_tx_set.add(tx_hash)
 
-
 async def update_prices():
     global price_cache
     if time.time() - price_cache["last_update"] < 60:
         return
     try:
-        async with session.get(
-            "https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT"
-        ) as r_ton, session.get(
-            "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT"
-        ) as r_sol:
+        async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT") as r_ton, \
+                   session.get("https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT") as r_sol:
             data_ton = await r_ton.json()
             data_sol = await r_sol.json()
             price_cache["TON"] = float(data_ton["price"])
@@ -82,16 +72,12 @@ async def update_prices():
         metrics["errors"] += 1
         log(f"⚠️ Ошибка цен: {e}")
 
-
 async def get_token_ticker(contract_address: str) -> str:
-    # Кэш с TTL 1 час
     cached = token_cache.get(contract_address)
     if cached and time.time() - cached["ts"] < 3600:
         return cached["symbol"]
     try:
-        async with session.get(
-            f"https://api.dexscreener.com/latest/dex/tokens/{contract_address}"
-        ) as r:
+        async with session.get(f"https://api.dexscreener.com/latest/dex/tokens/{contract_address}") as r:
             if r.status == 200:
                 data = await r.json()
                 if data.get("pairs"):
@@ -103,7 +89,6 @@ async def get_token_ticker(contract_address: str) -> str:
     except Exception as e:
         log(f"⚠️ DexScreener error: {e}")
     return "UNKNOWN"
-
 
 async def load_whales_from_db():
     global SOLANA_WHALES, TON_WHALES
@@ -123,10 +108,14 @@ async def load_whales_from_db():
         metrics["errors"] += 1
         log(f"❌ Ошибка БД: {e}")
 
-
 async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca=""):
     await update_prices()
+    
+    # ДЕБАГ: видим, что пришло на вход
+    log(f"🔍 save_to_db: {network} {wallet[:6]}… {action} ${amount_usd:.2f} {token}")
+
     if amount_usd < MIN_SWAP_USD:
+        log(f"🔍 отсев по сумме: ${amount_usd:.2f} < ${MIN_SWAP_USD}")
         return
     if is_seen(tx_hash):
         return
@@ -137,7 +126,6 @@ async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca="")
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
-        # ignore-duplicates: если tx_hash уже в базе — не падаем
         "Prefer": "resolution=ignore-duplicates,return=minimal",
     }
     data = {
@@ -154,14 +142,13 @@ async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca="")
     try:
         async with session.post(url, headers=headers, json=data) as resp:
             if resp.status in (200, 201, 204):
-                log(f"✅ {network} {wallet[:6]}… {action} {token} ${amount_usd:.2f}")
+                log(f"✅ СОХРАНЕНО: {network} {wallet[:6]}… {action} {token} ${amount_usd:.2f}")
                 if network == "Solana":
                     metrics["solana_saved"] += 1
                 else:
                     metrics["ton_saved"] += 1
                 await send_telegram_alert(action, wallet, amount_usd, token, network)
             elif resp.status == 409:
-                # конфликт unique — уже есть, ок
                 pass
             else:
                 metrics["errors"] += 1
@@ -169,7 +156,6 @@ async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca="")
     except Exception as e:
         metrics["errors"] += 1
         log(f"❌ Ошибка БД: {e}")
-
 
 async def send_telegram_alert(action, wallet, amount, token, network):
     if not BOT_TOKEN:
@@ -180,13 +166,9 @@ async def send_telegram_alert(action, wallet, amount, token, network):
         f"Токен: ${token}\nСеть: {network}\n"
         f"Сумма: ${amount:,.2f}\nКошелек: <code>{wallet}</code>"
     )
-    base_url = (
-        f"{SUPABASE_URL}/rest/v1/users"
-        f"?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
-    )
+    base_url = f"{SUPABASE_URL}/rest/v1/users?is_active=eq.true&min_amount=lte.{amount}&max_amount=gte.{amount}&select=chat_id"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 
-    # Пагинация: Supabase REST по умолчанию отдаёт max 1000
     all_users = []
     offset = 0
     while True:
@@ -217,7 +199,6 @@ async def send_telegram_alert(action, wallet, amount, token, network):
             )
         except Exception as e:
             log(f"⚠️ alert send {chat_id}: {e}")
-
 
 async def listen_to_solana():
     await update_prices()
@@ -304,12 +285,7 @@ async def listen_to_solana():
             log(f"❌ Solana WS: {e}. Перезапуск через 10 сек…")
             await asyncio.sleep(10)
 
-
 async def listen_to_ton():
-    """
-    TON: polling с rate-limit. TonAPI free = ~1 req/sec.
-    Обрабатываем батчами по 5 китов, пауза 1.5 сек между батчами.
-    """
     await update_prices()
     headers = {"Authorization": f"Bearer {TONAPI_KEY}", "Accept": "application/json"} if TONAPI_KEY else {}
 
@@ -335,64 +311,77 @@ async def listen_to_ton():
                         data = await resp.json()
                         for event in data.get("events", []):
                             metrics["ton_events"] += 1
+                            
                             if event.get("in_progress") is not False:
+                                log(f"🔍 TON event in_progress: {event.get('event_id','')[:12]}")
                                 continue
+                                
                             actions = event.get("actions", [])
+                            if not actions:
+                                log(f"🔍 TON event без actions: {event.get('event_id','')[:12]}")
+                                continue
+                                
                             for action in actions:
                                 if "JettonSwap" not in action.get("type", ""):
+                                    # ДЕБАГ: если это не свап, пишем тип
+                                    log(f"🔍 TON action не Swap: {action.get('type')}")
                                     continue
 
                                 swap = action.get("JettonSwap", {})
-                                # Поля TonAPI: amount_in / amount_out — в units jetton'а.
-                                # ton_in / ton_out — в nanoTON, ЕСЛИ присутствуют.
-                                # Определяем сторону по тому, что кит отдал:
-                                # - Если у кита убыло TON (ton_in > 0) → он КУПИЛ токен = BUY
-                                # - Если у кита прибыло TON (ton_out > 0) → он ПРОДАЛ токен = SELL
-                                ton_in = 0
-                                ton_out = 0
-                                try:
-                                    if swap.get("ton_in"):
-                                        ton_in = float(swap["ton_in"])
-                                    if swap.get("ton_out"):
-                                        ton_out = float(swap["ton_out"])
-                                except (ValueError, TypeError):
-                                    pass
+                                
+                                # --- НОВАЯ ЛОГИКА BUY/SELL ---
+                                # Если jetton_master_in ЕСТЬ — значит кит отдал токен, получил TON = SELL
+                                # Если jetton_master_out ЕСТЬ — значит кит отдал TON, получил токен = BUY
+                                jetton_in = swap.get("jetton_master_in")
+                                jetton_out = swap.get("jetton_master_out")
+                                
+                                # Сумма в TON (наноTON)
+                                ton_amount = 0.0
+                                if swap.get("amount_in") and not jetton_in:
+                                    # amount_in в TON (если на входе был TON)
+                                    ton_amount = float(swap.get("amount_in", "0")) / 1e9
+                                elif swap.get("amount_out") and not jetton_out:
+                                    # amount_out в TON (если на выходе был TON)
+                                    ton_amount = float(swap.get("amount_out", "0")) / 1e9
+                                
+                                # Если не смогли определить TON-объем, берем что есть
+                                if ton_amount == 0:
+                                    try:
+                                        ton_amount = float(swap.get("amount_in", "0") or 0) / 1e9
+                                        if ton_amount == 0:
+                                            ton_amount = float(swap.get("amount_out", "0") or 0) / 1e9
+                                    except (ValueError, TypeError):
+                                        pass
 
-                                # Fallback: если ton_in/ton_out нет — смотрим, чей jetton_master_in
-                                if ton_in > 0:
-                                    action_type = "BUY"
-                                elif ton_out > 0:
-                                    action_type = "SELL"
-                                else:
-                                    # Не смогли определить — пропускаем, НЕ врём "BUY"
-                                    log(f"⚠️ TON: не определили сторону для {event.get('event_id', '')[:12]}")
-                                    continue
-
-                                # Сумма в USD
-                                if ton_in > 0:
-                                    ton_amount = ton_in / 1e9
-                                else:
-                                    ton_amount = ton_out / 1e9
                                 usd_amount = ton_amount * price_cache["TON"]
 
                                 if usd_amount < MIN_SWAP_USD:
+                                    log(f"🔍 TON отсев по сумме: ${usd_amount:.2f} < ${MIN_SWAP_USD} (event {event.get('event_id','')[:12]})")
+                                    continue
+
+                                if jetton_in:
+                                    action_type = "SELL"
+                                    token_info = jetton_in
+                                elif jetton_out:
+                                    action_type = "BUY"
+                                    token_info = jetton_out
+                                else:
+                                    log(f"⚠️ TON: не определили сторону для {event.get('event_id', '')[:12]}")
                                     continue
 
                                 tx_hash = event.get("event_id", "")
                                 if not tx_hash or is_seen(tx_hash):
                                     continue
 
-                                jetton_info = swap.get("jetton_master_in") or swap.get("jetton_master_out")
-                                token_ticker = jetton_info.get("symbol", "UNKNOWN") if jetton_info else "TON"
-                                token_ca = jetton_info.get("address", "") if jetton_info else ""
+                                token_ticker = token_info.get("symbol", "UNKNOWN") if token_info else "TON"
+                                token_ca = token_info.get("address", "") if token_info else ""
 
                                 await save_to_db(wallet, action_type, usd_amount, token_ticker, "TON", tx_hash, token_ca)
                 except Exception as e:
                     metrics["errors"] += 1
                     log(f"⚠️ TON {wallet[:6]}: {e}")
-            await asyncio.sleep(1.5)  # rate-limit между батчами
+            await asyncio.sleep(1.5)
         await asyncio.sleep(15)
-
 
 async def handle_health(request):
     return web.json_response(
@@ -413,10 +402,8 @@ async def handle_health(request):
         }
     )
 
-
 async def handle_root(request):
     return web.Response(text="ExTracker Parser is running...")
-
 
 async def start_web_server():
     app = web.Application()
@@ -427,7 +414,6 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
     await site.start()
     log("✅ Веб-сервер запущен (/ и /health)")
-
 
 async def main():
     global session
@@ -449,7 +435,6 @@ async def main():
         if session and not session.closed:
             await session.close()
             log("✅ HTTP-сессия закрыта")
-
 
 if __name__ == "__main__":
     try:
