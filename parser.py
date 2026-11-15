@@ -82,6 +82,9 @@ async def get_token_ticker(contract_address: str) -> str:
                 data = await r.json()
                 if data.get("pairs"):
                     symbol = data["pairs"][0].get("baseToken", {}).get("symbol", "UNKNOWN")
+                    # Если символ пустой, ставим UNKNOWN
+                    if not symbol:
+                        symbol = "UNKNOWN"
                     token_cache[contract_address] = {"symbol": symbol, "ts": time.time()}
                     return symbol
             elif r.status == 429:
@@ -198,7 +201,9 @@ async def send_telegram_alert(action, wallet, amount, token, network):
         except Exception as e:
             log(f"⚠️ alert send {chat_id}: {e}")
 
-async def listen_to_solana():
+# --- ВНИМАНИЕ: ЭТА ФУНКЦИЯ ОСТАВЛЕНА ДЛЯ ИСТОРИИ, НО НЕ ЗАПУСКАЕТСЯ ---
+# Если хочешь вернуться на WebSocket вместо Webhook, раскомментируй её в main()
+async def listen_to_solana_WS():
     await update_prices()
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     enhanced_url = f"https://api.helius.xyz/v0/transactions/?api-key={HELIUS_API_KEY}"
@@ -372,7 +377,8 @@ async def handle_helius_webhook(request):
                 continue
             
             fee_payer = tx.get("feePayer")
-            if fee_payer not in SOLANA_WHALES:
+            # Защита от None
+            if not fee_payer or fee_payer not in SOLANA_WHALES:
                 continue
             
             account_data = tx.get("accountData", [])
@@ -447,7 +453,11 @@ async def main():
         await asyncio.sleep(2)
         await load_whales_from_db()
         asyncio.create_task(update_prices())
-        asyncio.create_task(listen_to_solana())
+        
+        # ВАЖНО: WebSocket ОТКЛЮЧЕН. Работаем через вебхук Helius.
+        # Если хочешь вернуть WebSocket, раскомментируй строку ниже.
+        # asyncio.create_task(listen_to_solana_WS())
+        
         asyncio.create_task(listen_to_ton())
 
         while True:
