@@ -2,6 +2,7 @@ import asyncio
 import os
 import logging
 import aiohttp
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
@@ -75,7 +76,21 @@ async def check_sub_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("Вы еще не подписались!", show_alert=True)
 
+# --- ФЕЙКОВЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+async def handle_ping(request):
+    return web.Response(text="Bot is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
+    await site.start()
+    logging.info("✅ Веб-сервер запущен для Render")
+
 async def main():
+    asyncio.create_task(start_web_server())
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
