@@ -11,7 +11,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 SUPPORT_LINK = "https://t.me/ExTrackerSupport"
-POLICY_LINK = "https://extracker-policy.vercel.app"
 PHOTO_URL = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_000000009af88210a3d41715da171b4a.png"
 
 logging.basicConfig(level=logging.INFO)
@@ -59,8 +58,7 @@ async def cmd_start(message: types.Message):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Запустить ExTracker", web_app=WebAppInfo(url="https://extracker-eight.vercel.app"), style="success")],
-        [InlineKeyboardButton(text="Поддержка", url=SUPPORT_LINK)],
-        [InlineKeyboardButton(text="Политика конфиденциальности", url=POLICY_LINK)]
+        [InlineKeyboardButton(text="Поддержка", url=SUPPORT_LINK)]
     ])
     
     await message.answer_photo(
