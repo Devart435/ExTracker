@@ -10,7 +10,6 @@ from collections import deque
 
 sys.stdout.reconfigure(line_buffering=True)
 
-# --- НАСТРОЙКИ ---
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 TONAPI_KEY = os.getenv("TONAPI_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -54,10 +53,15 @@ async def update_prices():
         async with session.get(url) as r:
             if r.status == 200:
                 data = await r.json()
-                price_cache["TON"] = data.get("the-open-network", {}).get("usd", price_cache["TON"])
-                price_cache["SOL"] = data.get("solana", {}).get("usd", price_cache["SOL"])
-                price_cache["last_update"] = time.time()
-                log(f"💰 Цены (CoinGecko): TON=${price_cache['TON']:.3f}, SOL=${price_cache['SOL']:.2f}")
+                if isinstance(data, dict) and "the-open-network" in data and "solana" in data:
+                    price_cache["TON"] = float(data["the-open-network"]["usd"])
+                    price_cache["SOL"] = float(data["solana"]["usd"])
+                    price_cache["last_update"] = time.time()
+                    log(f"💰 Цены (CoinGecko): TON=${price_cache['TON']:.3f}, SOL=${price_cache['SOL']:.2f}")
+                else:
+                    log("⚠️ CoinGecko вернул неожиданный формат данных")
+            else:
+                log(f"⚠️ CoinGecko HTTP {r.status}")
     except Exception as e:
         metrics["errors"] += 1
         log(f"⚠️ Ошибка цен: {e}")
