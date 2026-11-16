@@ -11,6 +11,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 CHANNEL_ID = "@extracker_ru"
 SUPPORT_LINK = "https://t.me/ExTrackerSupport"
+POLICY_LINK = "https://extracker-policy.vercel.app"
+PHOTO_URL = "https://wqktvtlmimvfdcogkzlf.supabase.co/storage/v1/object/public/banners/file_000000009af88210a3d41715da171b4a.png"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -29,8 +31,7 @@ async def check_subscription(user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except Exception:
-        return False
+    except Exception: return False
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -45,13 +46,26 @@ async def cmd_start(message: types.Message):
         await message.answer("Для использования бота подпишитесь на наш канал:", reply_markup=kb)
         return
 
+    name = message.from_user.first_name or "друг"
+    
+    caption = (
+        f"<b>Добро пожаловать в ExTracker, {name}.</b>\n\n"
+        "ExTracker — мониторинг крупных ончейн-сделок и смарт-мани в сетях TON и Solana в реальном времени.\n\n"
+        "Мы анализируем транзакции крупнейших игроков рынка, чтобы вы могли видеть движение капитала раньше остальных.\n"
+        "В приложении доступны: живая лента сделок, детальные графики активности китов, статистика по токенам и удобный поиск.\n"
+        "Все данные берутся напрямую из блокчейна и обновляются каждую секунду.\n"
+        "Никаких задержек, никакого шума — только важные сигналы для принятия решений."
+    )
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Запустить ExTracker", web_app=WebAppInfo(url="https://extracker-eight.vercel.app"), style="success")],
-        [InlineKeyboardButton(text="Поддержка", url=SUPPORT_LINK), InlineKeyboardButton(text="Политика", callback_data="policy_soon")]
+        [InlineKeyboardButton(text="Поддержка", url=SUPPORT_LINK)],
+        [InlineKeyboardButton(text="Политика конфиденциальности", url=POLICY_LINK)]
     ])
+    
     await message.answer_photo(
-        photo="https://i.imgur.com/your_logo.png",
-        caption="<b>Привет!</b> 👋\n\nExTracker — это твой терминал для трекинга китов в Solana и TON. Я показываю сделки крупных игроков в реальном времени.\n\nЖми кнопку ниже, чтобы начать.",
+        photo=PHOTO_URL,
+        caption=caption,
         reply_markup=kb, parse_mode="HTML"
     )
 
@@ -62,10 +76,6 @@ async def check_sub_callback(callback: types.CallbackQuery):
         await cmd_start(callback.message)
     else:
         await callback.answer("Вы еще не подписались!", show_alert=True)
-
-@dp.callback_query(F.data == "policy_soon")
-async def policy_soon_callback(callback: types.CallbackQuery):
-    await callback.answer("Раздел «Политика» временно недоступен.", show_alert=True)
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
