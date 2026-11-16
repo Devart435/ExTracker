@@ -3,7 +3,6 @@ import json
 import os
 import time
 import sys
-import websockets
 import aiohttp
 from aiohttp import web
 from datetime import datetime, timezone
@@ -13,7 +12,6 @@ sys.stdout.reconfigure(line_buffering=True)
 
 # --- НАСТРОЙКИ ---
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
-TON_API_KEY = os.getenv("TON_API_KEY")
 TONAPI_KEY = os.getenv("TONAPI_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/").replace("/rest/v1", "")
@@ -54,11 +52,12 @@ async def update_prices():
     try:
         url = "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network,solana&vs_currencies=usd"
         async with session.get(url) as r:
-            data = await r.json()
-            price_cache["TON"] = float(data["the-open-network"]["usd"])
-            price_cache["SOL"] = float(data["solana"]["usd"])
-            price_cache["last_update"] = time.time()
-            log(f"💰 Цены (CoinGecko): TON=${price_cache['TON']:.3f}, SOL=${price_cache['SOL']:.2f}")
+            if r.status == 200:
+                data = await r.json()
+                price_cache["TON"] = data.get("the-open-network", {}).get("usd", price_cache["TON"])
+                price_cache["SOL"] = data.get("solana", {}).get("usd", price_cache["SOL"])
+                price_cache["last_update"] = time.time()
+                log(f"💰 Цены (CoinGecko): TON=${price_cache['TON']:.3f}, SOL=${price_cache['SOL']:.2f}")
     except Exception as e:
         metrics["errors"] += 1
         log(f"⚠️ Ошибка цен: {e}")
@@ -123,7 +122,6 @@ async def save_to_db(wallet, action, amount_usd, token, network, tx_hash, ca="")
 
 async def send_telegram_alert(action, wallet, amount, token, network):
     if not BOT_TOKEN: return
-    # ИСПРАВЛЕНО: если SELL — ставим плюс, если BUY — минус
     sign = "+" if action == "SELL" else "-"
     indicator = "🟢" if action == "BUY" else "🔴"
     action_ru = "КУПИЛ" if action == "BUY" else "ПРОДАЛ"
@@ -196,13 +194,12 @@ async def listen_to_ton():
                                     if swap.get("ton_out"): ton_out = float(swap["ton_out"])
                                 except (ValueError, TypeError): pass
 
-                                # ИСПРАВЛЕНО: логика TON
                                 if ton_in > 0:
-                                    action_type = "SELL"  # TON пришел -> продал токен
+                                    action_type = "SELL"
                                 elif ton_out > 0:
-                                    action_type = "BUY"   # TON ушел -> купил токен
+                                    action_type = "BUY"
                                 else:
-                                    continue # Если TON нет в свапе (обмен токен-в-токен), скипаем
+                                    continue
 
                                 if ton_in > 0: ton_amount = ton_in / 1e9
                                 else: ton_amount = ton_out / 1e9
