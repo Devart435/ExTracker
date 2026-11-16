@@ -49,19 +49,23 @@ async def update_prices():
     global price_cache
     if time.time() - price_cache["last_update"] < 60: return
     try:
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=the-open-network,solana&vs_currencies=usd"
+        url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
         async with session.get(url) as r:
             if r.status == 200:
                 data = await r.json()
-                if isinstance(data, dict) and "the-open-network" in data and "solana" in data:
-                    price_cache["TON"] = float(data["the-open-network"]["usd"])
-                    price_cache["SOL"] = float(data["solana"]["usd"])
+                if data.get("code") == "0":
+                    tickers = data.get("data", [])
+                    for t in tickers:
+                        if t["instId"] == "TON-USDT":
+                            price_cache["TON"] = float(t["last"])
+                        elif t["instId"] == "SOL-USDT":
+                            price_cache["SOL"] = float(t["last"])
                     price_cache["last_update"] = time.time()
-                    log(f"💰 Цены (CoinGecko): TON=${price_cache['TON']:.3f}, SOL=${price_cache['SOL']:.2f}")
+                    log(f"💰 Цены (OKX): TON=${price_cache['TON']:.3f}, SOL=${price_cache['SOL']:.2f}")
                 else:
-                    log("⚠️ CoinGecko вернул неожиданный формат данных")
+                    log(f"⚠️ OKX API вернул код: {data.get('code')}")
             else:
-                log(f"⚠️ CoinGecko HTTP {r.status}")
+                log(f"⚠️ OKX HTTP {r.status}")
     except Exception as e:
         metrics["errors"] += 1
         log(f"⚠️ Ошибка цен: {e}")
